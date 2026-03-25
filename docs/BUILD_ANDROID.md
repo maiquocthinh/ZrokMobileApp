@@ -4,7 +4,7 @@
 
 ### 1. Install Fyne CLI
 ```powershell
-go install fyne.io/fyne/v2/cmd/fyne@latest
+go install fyne.io/tools/cmd/fyne@latest
 ```
 
 ### 2. Install JDK 17+
@@ -76,7 +76,7 @@ go version                  # → go1.25.x
 
 | Error | Fix |
 |-------|-----|
-| `fyne: command not found` | `go install fyne.io/fyne/v2/cmd/fyne@latest` |
+| `fyne: command not found` | `go install fyne.io/tools/cmd/fyne@latest` |
 | `ANDROID_HOME not set` | Set env var (step 3) |
 | `NDK not found` | Set `ANDROID_NDK_HOME` (step 5) |
 | `could not find javac` | Install JDK + set `JAVA_HOME` (step 2) |
