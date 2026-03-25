@@ -36,6 +36,9 @@ jobs:
       - name: Install Fyne CLI
         run: go install fyne.io/tools/cmd/fyne@latest
 
+      - name: Download Go modules
+        run: go mod download
+
       - name: Build APK
         run: fyne package --target android --app-id com.zrokapp --name "ZrokMobile"
 
