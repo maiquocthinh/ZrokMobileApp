@@ -52,8 +52,8 @@ $sdkmanager = "C:\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat"
 ```powershell
 cd d:\Workspace\Backend\Golang\ZrokApp
 
-# Build debug APK
-fyne package --target android --app-id com.zrokapp --name "ZrokMobile"
+# Build debug APK (arm64 only — giảm ~75% size)
+fyne package --target android/arm64 --app-id com.zrokapp --name "ZrokMobile"
 ```
 
 Output: `Zrok Mobile.apk` trong project root.

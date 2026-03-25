@@ -40,7 +40,7 @@ jobs:
         run: go mod download
 
       - name: Build APK
-        run: fyne package --target android --app-id com.zrokapp --name "ZrokMobile"
+        run: fyne package --target android/arm64 --app-id com.zrokapp --name "ZrokMobile"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
