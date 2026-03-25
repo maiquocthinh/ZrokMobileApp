@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Zrok Mobile (Chrome)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "deviceId": "chrome"
+        },
+        {
+            "name": "Zrok Mobile (Edge)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "deviceId": "edge"
+        },
+        {
+            "name": "Zrok Mobile (Debug)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart"
+        },
+        {
+            "name": "Zrok Mobile (Profile)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile",
+            "program": "lib/main.dart"
+        },
+        {
+            "name": "Zrok Mobile (Release)",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release",
+            "program": "lib/main.dart"
+        }
+    ]
+}
