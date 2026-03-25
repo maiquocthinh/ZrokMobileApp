@@ -53,7 +53,7 @@ $sdkmanager = "C:\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat"
 cd d:\Workspace\Backend\Golang\ZrokApp
 
 # Build debug APK
-fyne package -os android -appID com.zrokapp -name "Zrok Mobile"
+fyne package --target android --app-id com.zrokapp --name "ZrokMobile"
 ```
 
 Output: `Zrok Mobile.apk` trong project root.
