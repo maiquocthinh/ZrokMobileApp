@@ -1,0 +1,50 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Flutter: Build APK (Release)",
+            "type": "shell",
+            "command": "flutter",
+            "args": [
+                "build",
+                "apk",
+                "--release"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$dart-flutter"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            }
+        },
+        {
+            "label": "Flutter: Build AppBundle (Play Store)",
+            "type": "shell",
+            "command": "flutter",
+            "args": [
+                "build",
+                "appbundle",
+                "--release"
+            ],
+            "group": "build",
+            "problemMatcher": [
+                "$dart-flutter"
+            ],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "shared"
+            }
+        }
+    ]
+}
