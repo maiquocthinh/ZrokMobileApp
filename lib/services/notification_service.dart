@@ -7,14 +7,19 @@ class NotificationService {
   Future<void> init() async {
     if (_initialized) return;
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+    try {
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const initSettings = InitializationSettings(android: androidSettings);
 
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTap,
-    );
-    _initialized = true;
+      await _plugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onNotificationTap,
+      );
+      _initialized = true;
+    } catch (e) {
+      // Notifications not available — fail gracefully
+      _initialized = false;
+    }
   }
 
   void _onNotificationTap(NotificationResponse response) {
@@ -88,18 +93,26 @@ class NotificationService {
     required String channel,
     required String channelName,
   }) async {
-    final details = NotificationDetails(
-      android: AndroidNotificationDetails(
-        channel,
-        channelName,
-        importance: Importance.high,
-        priority: Priority.high,
-      ),
-    );
-    await _plugin.show(id, title, body, details);
+    if (!_initialized) return;
+    try {
+      final details = NotificationDetails(
+        android: AndroidNotificationDetails(
+          channel,
+          channelName,
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      );
+      await _plugin.show(id, title, body, details);
+    } catch (_) {
+      // Fail silently — notifications are optional
+    }
   }
 
   Future<void> cancelAll() async {
-    await _plugin.cancelAll();
+    if (!_initialized) return;
+    try {
+      await _plugin.cancelAll();
+    } catch (_) {}
   }
 }

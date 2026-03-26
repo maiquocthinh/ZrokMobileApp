@@ -14,6 +14,7 @@ import '../services/version_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/notification_service.dart';
 import '../services/foreground_service.dart';
+import '../services/command_executor.dart';
 
 class AppManager extends ChangeNotifier {
   final StorageService _storage = StorageService();
@@ -22,6 +23,7 @@ class AppManager extends ChangeNotifier {
   final ConnectivityService _connectivity = ConnectivityService();
   final NotificationService _notifications = NotificationService();
   final ForegroundService _foreground = ForegroundService();
+  final CommandExecutor _executor = CommandExecutor();
   final _uuid = const Uuid();
 
   // --- State ---
@@ -57,35 +59,56 @@ class AppManager extends ChangeNotifier {
 
   // --- Init ---
   Future<void> init() async {
+    // Storage is critical — must succeed
     await _storage.init();
-    await _notifications.init();
-    await _foreground.init();
-    await _connectivity.init();
 
+    // Platform services — wrap each in try-catch so one failure
+    // doesn't prevent the app from launching
+    try { await _notifications.init(); } catch (_) {}
+    try { await _foreground.init(); } catch (_) {}
+    try { await _connectivity.init(); } catch (_) {}
+
+    // Load persisted data
     _envs = _storage.loadEnvs();
     _history = _storage.loadHistory();
     _quickActions = _storage.loadQuickActions();
     _settings = _storage.loadSettings();
     _versions = _storage.loadVersions();
 
-    // Sync downloaded state
-    await _versionService.syncLocalState(_versions);
+    // Sync downloaded state (non-critical)
+    try { await _versionService.syncLocalState(_versions); } catch (_) {}
 
-    // Auto-select first enabled env
-    if (enabledEnvs.isNotEmpty) {
-      _selectedEnvId = enabledEnvs.first.id;
+    // First-launch: create a default environment so the user can
+    // start running commands immediately
+    if (_envs.isEmpty) {
+      final defaultEnv = EnvInfo(
+        id: _uuid.v4().substring(0, 8),
+        name: 'Default',
+        endpoint: 'https://api.zrok.io',
+        enabled: true,
+      );
+      _envs.add(defaultEnv);
+      _selectedEnvId = defaultEnv.id;
+      await _storage.saveEnvs(_envs);
+    } else {
+      // Auto-select first enabled env
+      if (enabledEnvs.isNotEmpty) {
+        _selectedEnvId = enabledEnvs.first.id;
+      }
     }
 
     // Connectivity listener for auto-reconnect
-    _connectivitySub = _connectivity.onConnectivityChanged.listen((connected) {
-      if (connected && _settings.autoReconnect) {
-        _handleReconnect();
-      } else if (!connected) {
-        if (_settings.notificationsEnabled) {
-          _notifications.showConnectionLost();
+    try {
+      _connectivitySub = _connectivity.onConnectivityChanged.listen((connected) {
+        if (connected && _settings.autoReconnect) {
+          _handleReconnect();
+        } else if (!connected) {
+          if (_settings.notificationsEnabled) {
+            _notifications.showConnectionLost();
+          }
         }
-      }
-    });
+      });
+    } catch (_) {}
 
     // Uptime refresh timer
     _uptimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -164,7 +187,7 @@ class AppManager extends ChangeNotifier {
   int taskCountForEnv(String envId) =>
       _tasks.where((t) => t.envId == envId && t.isRunning).length;
 
-  // --- Task Execution ---
+  // --- Task Execution (Real CLI) ---
   Future<TaskEntry?> runTask(String command) async {
     final env = selectedEnv;
     if (env == null) return null;
@@ -172,36 +195,89 @@ class AppManager extends ChangeNotifier {
     final parsed = CommandParser.parse(command);
     if (parsed == null) return null;
 
+    final versionTag = env.zrokVersion ?? _settings.defaultZrokVersion;
+    String? binaryPath;
+
+    // Find the binary to execute
+    if (versionTag != null) {
+      binaryPath = await _versionService.getLocalPath(versionTag);
+    }
+    // Fallback: use latest installed version
+    if (binaryPath == null) {
+      final installed = _versions.where((v) => v.isDownloaded).toList();
+      if (installed.isNotEmpty) {
+        installed.sort((a, b) => b.version.compareTo(a.version));
+        binaryPath = installed.first.localPath;
+      }
+    }
+    // Fallback: try system-wide 'zrok' in PATH
+    binaryPath ??= 'zrok';
+
     final task = TaskEntry(
       id: _uuid.v4().substring(0, 8),
       envId: env.id,
       command: parsed.fullCommand,
     );
 
-    // Simulate task start
     task.addLog('[info] Starting: zrok ${parsed.fullCommand}');
-    task.addLog('[info] Env: ${env.name}');
-    task.addLog('[info] Version: ${env.zrokVersion ?? _settings.defaultZrokVersion ?? "latest"}');
-
-    // Simulate share URL for share/access commands
-    if (parsed.command == 'share') {
-      final fakeUrl = 'https://${task.id}.share.zrok.io';
-      task.shareUrl = fakeUrl;
-      task.addLog('[url] $fakeUrl');
-      if (_settings.notificationsEnabled) {
-        _notifications.showShareActive(fakeUrl);
-      }
-    }
+    task.addLog('[info] Env: ${env.name} (${env.endpoint})');
+    task.addLog('[info] Binary: $binaryPath');
 
     _tasks.insert(0, task);
-
-    // Add to history
     _addToHistory(parsed.fullCommand, env);
+    notifyListeners();
+
+    // Get token for this env
+    String? token;
+    try { token = await _secureStorage.readToken(env.id); } catch (_) {}
+
+    // Spawn real process
+    await _executor.start(
+      binaryPath: binaryPath,
+      command: parsed.fullCommand,
+      taskId: task.id,
+      envToken: token,
+      apiEndpoint: env.endpoint,
+      onStdout: (line) {
+        task.addLog(line);
+        // Detect share URL from zrok output
+        if (line.contains('https://') && task.shareUrl == null) {
+          final urlMatch = RegExp(r'(https://\S+)').firstMatch(line);
+          if (urlMatch != null) {
+            task.shareUrl = urlMatch.group(1);
+            if (_settings.notificationsEnabled) {
+              _notifications.showShareActive(task.shareUrl!);
+            }
+          }
+        }
+        notifyListeners();
+      },
+      onStderr: (line) {
+        task.addLog('[err] $line');
+        notifyListeners();
+      },
+      onExit: (exitCode) {
+        if (task.isRunning) {
+          task.status = exitCode == 0 ? TaskStatus.stopped : TaskStatus.error;
+          task.endTime = DateTime.now();
+          task.addLog('[info] Process exited with code $exitCode');
+          if (_settings.notificationsEnabled) {
+            _notifications.showTaskStopped('zrok ${task.command}');
+          }
+          // Update foreground service
+          if (runningTaskCount > 0) {
+            _foreground.update(runningTaskCount);
+          } else {
+            _foreground.stop();
+          }
+          notifyListeners();
+        }
+      },
+    );
 
     // Foreground service
-    await _foreground.start(runningTaskCount);
+    try { await _foreground.start(runningTaskCount); } catch (_) {}
 
-    notifyListeners();
     return task;
   }
 
@@ -209,9 +285,12 @@ class AppManager extends ChangeNotifier {
     final task = _tasks.cast<TaskEntry?>().firstWhere((t) => t?.id == taskId, orElse: () => null);
     if (task == null || !task.isRunning) return;
 
+    // Kill the real process
+    await _executor.stop(taskId);
+
     task.status = TaskStatus.stopped;
     task.endTime = DateTime.now();
-    task.addLog('[info] Task stopped');
+    task.addLog('[info] Task stopped by user');
 
     if (_settings.notificationsEnabled) {
       _notifications.showTaskStopped('zrok ${task.command}');
