@@ -17,30 +17,37 @@ class CommandExecutor {
   CommandExecutor() {
     // Listen for native callbacks
     _channel.setMethodCallHandler((call) async {
-      final taskId = call.arguments['taskId'] as String?;
-      if (taskId == null) return;
+      try {
+        final args = call.arguments;
+        if (args == null || args is! Map) return;
 
-      switch (call.method) {
-        case 'onStdout':
-          final line = call.arguments['line'] as String? ?? '';
-          if (line.trim().isNotEmpty) {
-            _stdoutCallbacks[taskId]?.call(line);
-          }
-          break;
-        case 'onStderr':
-          final line = call.arguments['line'] as String? ?? '';
-          if (line.trim().isNotEmpty) {
-            _stderrCallbacks[taskId]?.call(line);
-          }
-          break;
-        case 'onExit':
-          final exitCode = call.arguments['exitCode'] as int? ?? -1;
-          _running.remove(taskId);
-          _exitCallbacks[taskId]?.call(exitCode);
-          _stdoutCallbacks.remove(taskId);
-          _stderrCallbacks.remove(taskId);
-          _exitCallbacks.remove(taskId);
-          break;
+        final taskId = args['taskId']?.toString();
+        if (taskId == null) return;
+
+        switch (call.method) {
+          case 'onStdout':
+            final line = args['line']?.toString() ?? '';
+            if (line.trim().isNotEmpty) {
+              _stdoutCallbacks[taskId]?.call(line);
+            }
+            break;
+          case 'onStderr':
+            final line = args['line']?.toString() ?? '';
+            if (line.trim().isNotEmpty) {
+              _stderrCallbacks[taskId]?.call(line);
+            }
+            break;
+          case 'onExit':
+            final exitCode = args['exitCode'] is int ? args['exitCode'] as int : -1;
+            _running.remove(taskId);
+            _exitCallbacks[taskId]?.call(exitCode);
+            _stdoutCallbacks.remove(taskId);
+            _stderrCallbacks.remove(taskId);
+            _exitCallbacks.remove(taskId);
+            break;
+        }
+      } catch (_) {
+        // Silently ignore callback errors to prevent crash
       }
     });
   }
