@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/env_info.dart';
@@ -196,14 +195,15 @@ class AppManager extends ChangeNotifier {
     final parsed = CommandParser.parse(command);
     if (parsed == null) return null;
 
-    final versionTag = env.zrokVersion ?? _settings.defaultZrokVersion;
     String? binaryPath;
 
-    // Find the binary to execute
+    // Priority 1: Use the specific downloaded version assigned to this environment
+    final versionTag = env.zrokVersion ?? _settings.defaultZrokVersion;
     if (versionTag != null) {
       binaryPath = await _versionService.getLocalPath(versionTag);
     }
-    // Fallback: use latest installed version
+
+    // Priority 2: Any downloaded version
     if (binaryPath == null) {
       final installed = _versions.where((v) => v.isDownloaded).toList();
       if (installed.isNotEmpty) {
@@ -212,9 +212,11 @@ class AppManager extends ChangeNotifier {
       }
     }
 
-    // Pre-check: verify the binary exists before trying to run it
+    // Priority 3 (Fallback): Bundled binary from APK native lib dir (always has exec permission)
+    binaryPath ??= await _executor.getBundledBinaryPath();
+
+    // No binary found at all
     if (binaryPath == null) {
-      // No binary available at all — create an error task immediately
       final errorTask = TaskEntry(
         id: _uuid.v4().substring(0, 8),
         envId: env.id,
@@ -223,29 +225,10 @@ class AppManager extends ChangeNotifier {
         endTime: DateTime.now(),
       );
       errorTask.addLog('[error] No zrok binary found!');
-      errorTask.addLog('[info] Go to Settings > Versions to download a zrok binary first.');
+      errorTask.addLog('[info] Download a version from Settings > Versions, or rebuild with CI/CD.');
       _tasks.insert(0, errorTask);
       notifyListeners();
       return errorTask;
-    }
-
-    // Check if binary file exists on disk
-    if (binaryPath != 'zrok' && binaryPath != 'zrok2') {
-      final binaryFile = File(binaryPath);
-      if (!await binaryFile.exists()) {
-        final errorTask = TaskEntry(
-          id: _uuid.v4().substring(0, 8),
-          envId: env.id,
-          command: parsed.fullCommand,
-          status: TaskStatus.error,
-          endTime: DateTime.now(),
-        );
-        errorTask.addLog('[error] Binary not found at: $binaryPath');
-        errorTask.addLog('[info] The binary may have been deleted. Re-download from Settings > Versions.');
-        _tasks.insert(0, errorTask);
-        notifyListeners();
-        return errorTask;
-      }
     }
 
     final task = TaskEntry(
