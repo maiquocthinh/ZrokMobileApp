@@ -1,3 +1,9 @@
+<<<<<<< HEAD
+# F05 — Environments & Settings Screen
+
+> 📐 Wireframe: [wireframes.md → §5 Environments](wireframes.md#5--environments--settings)
+> 🎨 Stitch UI: [Environments & Settings](https://stitch.withgoogle.com/projects/5731102824525581805/screens/404e6ed03fcf4cf4bb2c058c3fdbd603)
+=======
 # F05 — Environments Screen
 
 ## Wireframe
@@ -27,12 +33,40 @@
 │ 🏠Home  📜History  ⭐Quick   │
 └──────────────────────────────┘
 ```
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ## Thành phần UI
 
 ### Env Card
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| Status icon | 🟢 / ⚪ | `env.enabled` |
+| Name | `Text` bold | `env.name` |
+| Endpoint | `Text` (JetBrains Mono) | `env.endpoint` |
+| Token | `Text` masked + 🔒 | Secure storage (`env_token_{id}`) |
+| Version | `Text` + `[▼]` | `env.zrokVersion` → tap opens Version Picker |
+| Status text | `Text` | "Enabled · N tasks" / "Not enabled" |
+| Enable/Disable | `OutlinedButton` | Toggle |
+| Delete 🗑️ | `IconButton(Icons.delete)` | Confirm → `manager.deleteEnv(id)` |
+
+### Enable Dialog
+- `TextField` (obscureText) cho invite token
+- Token lưu vào `flutter_secure_storage` (encrypted)
+- Button "Enable" → `manager.enableEnv(envId, token)`
+
+### Add Environment Dialog
+- `TextField` cho Name + Endpoint
+- Default endpoint: `https://api.zrok.io`
+- Button "Add" → `manager.createEnv(name, endpoint)`
+
+### Settings Section
+| Element | Widget | Dữ liệu |
+|---------|--------|----------|
+| Notifications | `SwitchListTile` | `settings.notificationsEnabled` |
+| Auto-reconnect | `SwitchListTile` | `settings.autoReconnect` |
+| Default version | `DropdownButton` | `settings.defaultZrokVersion` |
+=======
 | Status icon | 🟢 / ⚪ | `env.Enabled` |
 | Name | Label bold | `env.Name` |
 | Endpoint | Label mono | `env.Endpoint` |
@@ -207,9 +241,15 @@
   ```
 - [ ] **T9.4** Layout: `container.NewVBox(separator, settingsLabel, notifCheck, reconnCheck)`
 - [ ] **T9.5** `go build ./...` pass (cần `settings.go` từ F08 trước)
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ---
 
 ## Files
+<<<<<<< HEAD
+- **Screen**: `lib/screens/environments/environments_screen.dart`
+- **Phụ thuộc**: `lib/managers/app_manager.dart`, `lib/models/env_info.dart`, `lib/models/app_settings.dart`
+=======
 - **Sửa**: `internal/ui/environments.go`
 - **Phụ thuộc**: `internal/core/manager.go` (EnableEnv, DisableEnv qua SDK), `internal/core/settings.go` (F08)
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c

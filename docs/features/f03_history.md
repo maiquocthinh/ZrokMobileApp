@@ -1,5 +1,39 @@
 # F03 — History Screen
 
+<<<<<<< HEAD
+> 📐 Wireframe: [wireframes.md → §3 History](wireframes.md#3--history)
+> 🎨 Stitch UI: [History](https://stitch.withgoogle.com/projects/5731102824525581805/screens/dfd182986d24437d86606ac9797d458f)
+
+## Thành phần UI
+
+### Header
+| Element | Widget | Dữ liệu |
+|---------|--------|----------|
+| Title | `Text("History")` | Static |
+| Clear All | `IconButton(Icons.delete_sweep)` | `manager.clearHistory()` |
+| Search | `TextField` | `manager.searchHistory(query)` |
+
+### History Card
+| Element | Widget | Dữ liệu |
+|---------|--------|----------|
+| Command | `Text` (JetBrains Mono) | `"zrok " + entry.command` |
+| Env + version + time | `Text` xám | `"envName · v0.4.44 · 14:30"` |
+| ▶ Run | `IconButton` | Re-run command via `manager.runTask()` |
+| ⭐ Save | `IconButton` | Save as Quick Action |
+| 🗑️ Delete | `IconButton` | `manager.deleteHistory(id)` |
+
+### Interactions
+| Gesture | Action |
+|---------|--------|
+| Swipe ← | Delete entry |
+| Swipe → | Run again |
+| Pull down | Refresh list |
+
+### Date Grouping
+- Groups: "Today", "Yesterday", "Mar 24" etc.
+
+**Empty state**: `EmptyState(icon: Icons.history, title: "No commands yet")`
+=======
 ## Wireframe
 ```
 ┌──────────────────────────────┐
@@ -145,10 +179,16 @@
 - [ ] **T6.3** 🗑️ Delete button: `u.manager.DeleteHistory(entry.ID)` → refresh list
 - [ ] **T6.4** Empty state: icon 📜 + "No commands yet" + "Commands you run will appear here"
 - [ ] **T6.5** `go build ./...` pass
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ---
 
 ## Files
+<<<<<<< HEAD
+- **Screen**: `lib/screens/history/history_screen.dart`
+- **Phụ thuộc**: `lib/managers/app_manager.dart`, `lib/models/history_entry.dart`
+=======
 - **Tạo mới**: `internal/core/history.go`
 - **Sửa**: `internal/core/manager.go` (thêm history fields, gọi loadHistory)
 - **Sửa**: `internal/ui/history.go`
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c

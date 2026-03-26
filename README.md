@@ -1,3 +1,21 @@
+<<<<<<< HEAD
+# myapp
+
+A new Flutter project.
+
+## Getting Started
+
+This project is a starting point for a Flutter application.
+
+A few resources to get you started if this is your first Flutter project:
+
+- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
+- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+
+For help getting started with Flutter development, view the
+[online documentation](https://docs.flutter.dev/), which offers tutorials,
+samples, guidance on mobile development, and a full API reference.
+=======
 # Zrok Mobile — Pure Go Android App
 
 A personal Android app to run [zrok](https://zrok.io) tunneling commands. Built entirely in Go with [Fyne UI](https://fyne.io) — no Kotlin, no Android Studio needed.
@@ -91,3 +109,4 @@ go build ./...                       # Full compile check
 ## License
 
 Personal project.
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c

@@ -1,5 +1,9 @@
 # F01 — Dashboard Screen
 
+<<<<<<< HEAD
+> 📐 Wireframe: [wireframes.md → §1 Dashboard](wireframes.md#1--dashboard)
+> 🎨 Stitch UI: [Zrok Dashboard](https://stitch.withgoogle.com/projects/5731102824525581805/screens/be4e4feabb9c44cc80bd3bb12c800bd9)
+=======
 ## Wireframe
 ```
 ┌──────────────────────────────┐
@@ -32,35 +36,76 @@
 │ 🏠Home  📜History  ⭐Quick   │
 └──────────────────────────────┘
 ```
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ## Thành phần UI
 
 ### 1. Header
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| Title | `Text("Zrok Mobile")` | Static |
+| Env selector | `DropdownButton` | `manager.enabledEnvs` |
+| Env status | `Text("● Enabled")` | Từ env đang chọn |
+| Settings icon | `IconButton(Icons.settings)` | Navigate → `/environments` |
+=======
 | Title | Label "Zrok Mobile" | Static |
 | Env selector | `widget.Select` | `manager.ListEnvs()` (chỉ enabled) |
 | Env status | Label "● Enabled" | Từ env đang chọn |
 | Settings icon | IconButton ⚙️ | Navigate → Environments tab |
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ### 2. Command Input Card
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| Prefix "$ zrok" | `Text` | Static |
+| Command text | `TextField` | User nhập |
+| Run button ▶ | `ElevatedButton.icon` | Gọi `manager.runTask()` |
+| Quick chips | `ActionChip` | share, access, reserve, status, overview |
+=======
 | Prefix "$ zrok" | Label | Static |
 | Command text | `widget.Entry` | User nhập |
 | Run button ▶ | `widget.Button` (HighImportance) | Gọi `manager.RunTask()` |
 | Quick chips | Nhiều `widget.Button` nhỏ | share, access, reserve, status, overview, invite |
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ### 3. Running Tasks Section
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| Header "Running Tasks (N)" | `Text` | `manager.runningTaskCount` |
+| "Stop All" button | `TextButton` | `manager.stopAllTasks()` |
+| Task groups | `Column` per env | Group tasks by `envId` |
+| Env group header | `Text` | `"envName (vX.Y.Z)"` — shows zrok version |
+=======
 | Header "Running Tasks (N)" | Label | `manager.RunningTaskCount()` |
 | "Stop All" button | Button | `manager.StopAllTasks()` |
 | Task groups | VBox per env | Group tasks by `envID` |
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ### 4. Task Card (mỗi task)
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| Status icon | 🟢 running / ⏹ stopped | `task.status` |
+| Command | `Text` bold | `"zrok " + task.command` |
+| Output URL | `Text` teal | `task.shareUrl` (tap to copy) |
+| Uptime | `Text` "⏱ 2h 15m" | `task.uptime` |
+| Stop | `IconButton(Icons.stop)` | `manager.stopTask(id)` |
+| Logs | `IconButton(Icons.article)` | Navigate → `/logs/$id` |
+| Copy 📋 | `IconButton(Icons.copy)` | Copy URL to clipboard |
+| Share ↗ | `IconButton(Icons.share)` | Native share intent |
+
+### 5. Swipe Actions & Gestures
+| Gesture | Action |
+|---------|--------|
+| Swipe ← | Stop task |
+| Swipe → | Open logs |
+| Pull down | Refresh task list |
+
+**Empty state**: `EmptyState(icon: Icons.play_arrow, title: "No tasks running")`
+=======
 | Status icon | 🟢 running / ⏹ stopped / 🔴 error | `task.Status` |
 | Command | Label bold | `"zrok " + task.Command` |
 | Output URL | Label primary color | Từ task output (share URL) |
@@ -148,9 +193,15 @@
   u.manager.AddHistory(u.selectedEnvID, cmdEntry.Text)
   ```
 - [ ] **T6.2** `go build ./...` pass (cần `history.go` từ F03 trước)
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ---
 
 ## Files
+<<<<<<< HEAD
+- **Screen**: `lib/screens/dashboard/dashboard_screen.dart`
+- **Phụ thuộc**: `lib/managers/app_manager.dart`
+=======
 - **Sửa**: `internal/ui/dashboard.go`
 - **Phụ thuộc**: `internal/core/manager.go`, `internal/core/history.go` (F03)
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c

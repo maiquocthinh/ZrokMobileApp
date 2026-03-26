@@ -1,5 +1,9 @@
 # F04 — Quick Actions Screen
 
+<<<<<<< HEAD
+> 📐 Wireframe: [wireframes.md → §4 Quick Actions](wireframes.md#4--quick-actions)
+> 🎨 Stitch UI: [Quick Actions](https://stitch.withgoogle.com/projects/5731102824525581805/screens/6d33302f791c4829af2729dad30231dc)
+=======
 ## Wireframe
 ```
 ┌──────────────────────────────┐
@@ -25,12 +29,34 @@
 │ 🏠Home  📜History  ⭐Quick   │
 └──────────────────────────────┘
 ```
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ## Thành phần UI
 
 ### Quick Action Card
 | Element | Widget | Dữ liệu |
 |---------|--------|----------|
+<<<<<<< HEAD
+| ⭐ Name | `Text` bold | `action.name` |
+| Command | `Text` (JetBrains Mono) | `"zrok " + action.command` |
+| Env + version | `Text` xám | `"envName (v0.4.44)"` |
+| ▶ Run | `ElevatedButton` | Run via `manager.runTask()` |
+| ✏️ Edit | `IconButton(Icons.edit)` | Mở edit dialog |
+| 🗑️ Delete | `IconButton(Icons.delete)` | Confirm → `manager.deleteQuickAction(id)` |
+
+### Add / Edit Dialog
+- Widget: `AlertDialog` with `TextField` + `DropdownButton`
+- Fields: Name, Command, Environment
+- Validate: name, command, env không rỗng
+
+### Interactions
+| Gesture | Action |
+|---------|--------|
+| Swipe ← | Delete |
+| Swipe → | Run |
+
+**Empty state**: `EmptyState(icon: Icons.bolt, title: "No quick actions")`
+=======
 | ⭐ Name | Label bold | `action.Name` |
 | Command | Label mono | `"zrok " + action.Command` |
 | Env | Label xám | `action.EnvName` |
@@ -145,11 +171,17 @@
   tabs.SetTabLocation(container.TabLocationBottom)
   ```
 - [ ] **T9.2** `go build ./...` pass
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
 
 ---
 
 ## Files
+<<<<<<< HEAD
+- **Screen**: `lib/screens/quick_actions/quick_actions_screen.dart`
+- **Phụ thuộc**: `lib/managers/app_manager.dart`, `lib/models/quick_action.dart`
+=======
 - **Tạo mới**: `internal/core/quickaction.go`, `internal/ui/quickactions.go`
 - **Sửa**: `internal/core/manager.go` (fields + loadQuickActions)
 - **Sửa**: `internal/ui/app.go` (4 tabs)
 - **Sửa**: `internal/ui/history.go` (tách Quick Actions ra)
+>>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
