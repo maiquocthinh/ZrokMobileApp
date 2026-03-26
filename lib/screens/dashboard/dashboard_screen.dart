@@ -57,16 +57,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
               // -- Command Input --
               SliverToBoxAdapter(child: _buildCommandInput(manager)),
 
-              // -- Running Tasks Header --
+              // -- Tasks Header --
               SliverToBoxAdapter(child: _buildTasksHeader(manager)),
 
-              // -- Task List --
-              if (manager.runningTasks.isEmpty)
+              // -- Task List (ALL tasks: running, stopped, error) --
+              if (manager.tasks.isEmpty)
                 const SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyState(
                     icon: Icons.play_arrow_rounded,
-                    title: 'No tasks running',
+                    title: 'No tasks yet',
                     subtitle: 'Enter a command above to start a tunnel',
                   ),
                 )
@@ -167,7 +167,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 4,
-              children: ['share', 'access', 'reserve', 'status', 'overview'].map((cmd) =>
+              children: ['share', 'access', 'status', 'overview', 'enable'].map((cmd) =>
                 ActionChip(
                   label: Text(cmd),
                   onPressed: () => _commandController.text = '$cmd ',
@@ -181,30 +181,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildTasksHeader(AppManager manager) {
-    final count = manager.runningTaskCount;
-    if (count == 0) return const SizedBox.shrink();
+    final runCount = manager.runningTaskCount;
+    final totalCount = manager.tasks.length;
+    if (totalCount == 0) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          Text('Running Tasks ($count)',
+          Text('Tasks ($runCount running / $totalCount total)',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
           const Spacer(),
-          TextButton.icon(
-            icon: const Icon(Icons.stop_rounded, size: 16),
-            label: const Text('Stop All'),
-            onPressed: () => manager.stopAllTasks(),
-          ),
+          if (runCount > 0)
+            TextButton.icon(
+              icon: const Icon(Icons.stop_rounded, size: 16),
+              label: const Text('Stop All'),
+              onPressed: () => manager.stopAllTasks(),
+            ),
+          if (totalCount > runCount)
+            TextButton.icon(
+              icon: const Icon(Icons.clear_all_rounded, size: 16),
+              label: const Text('Clear'),
+              onPressed: () => manager.clearStoppedTasks(),
+            ),
         ],
       ),
     );
   }
 
   SliverList _buildTaskList(AppManager manager) {
-    // Group tasks by env
+    // Show ALL tasks, grouped by env, running first then stopped/error
+    final sorted = List<TaskEntry>.from(manager.tasks);
+    sorted.sort((a, b) {
+      // Running tasks first
+      if (a.isRunning && !b.isRunning) return -1;
+      if (!a.isRunning && b.isRunning) return 1;
+      // Then by start time (newest first)
+      return b.startTime.compareTo(a.startTime);
+    });
+
     final grouped = <String, List<TaskEntry>>{};
-    for (final task in manager.tasks.where((t) => t.isRunning)) {
+    for (final task in sorted) {
       grouped.putIfAbsent(task.envId, () => []).add(task);
     }
 
@@ -234,6 +251,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return SliverList(delegate: SliverChildListDelegate(widgets));
   }
 
+  Color _statusColor(TaskStatus status) {
+    switch (status) {
+      case TaskStatus.running: return AppTheme.teal;
+      case TaskStatus.stopped: return AppTheme.outline;
+      case TaskStatus.error: return AppTheme.error;
+    }
+  }
+
+  String _statusLabel(TaskStatus status) {
+    switch (status) {
+      case TaskStatus.running: return 'Running';
+      case TaskStatus.stopped: return 'Stopped';
+      case TaskStatus.error: return 'Error';
+    }
+  }
+
   Widget _buildTaskCard(AppManager manager, TaskEntry task) {
     return Dismissible(
       key: Key(task.id),
@@ -247,14 +280,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 24),
         color: AppTheme.error.withValues(alpha: 0.15),
-        child: const Icon(Icons.stop_rounded, color: AppTheme.error),
+        child: Icon(
+          task.isRunning ? Icons.stop_rounded : Icons.delete_outline,
+          color: AppTheme.error,
+        ),
       ),
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.startToEnd) {
           context.push('/logs/${task.id}');
           return false;
         } else {
-          manager.stopTask(task.id);
+          if (task.isRunning) {
+            manager.stopTask(task.id);
+          } else {
+            manager.removeTask(task.id);
+          }
           return false;
         }
       },
@@ -266,12 +306,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.circle, size: 8,
-                      color: task.isRunning ? AppTheme.teal : AppTheme.outline),
+                  Icon(Icons.circle, size: 8, color: _statusColor(task.status)),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text('zrok ${task.command}',
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _statusColor(task.status).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      _statusLabel(task.status),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _statusColor(task.status),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -287,6 +341,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Text('→ ${task.shareUrl}', style: AppTheme.monoTeal),
                 ),
               ],
+              // Show last log line for error tasks
+              if (task.status == TaskStatus.error && task.logs.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  task.logs.last,
+                  style: TextStyle(fontSize: 11, color: AppTheme.error),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -294,7 +358,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(width: 4),
                   Text(task.uptimeFormatted, style: Theme.of(context).textTheme.labelSmall),
                   const Spacer(),
-                  _iconBtn(Icons.stop_rounded, () => manager.stopTask(task.id)),
+                  if (task.isRunning)
+                    _iconBtn(Icons.stop_rounded, () => manager.stopTask(task.id))
+                  else
+                    _iconBtn(Icons.replay_rounded, () {
+                      // Re-run the same command
+                      manager.runTask(task.command);
+                    }),
                   _iconBtn(Icons.article_outlined, () => context.push('/logs/${task.id}')),
                   if (task.shareUrl != null) ...[
                     _iconBtn(Icons.copy_rounded, () {
@@ -307,6 +377,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Share.share(task.shareUrl!);
                     }),
                   ],
+                  if (!task.isRunning)
+                    _iconBtn(Icons.close_rounded, () => manager.removeTask(task.id)),
                 ],
               ),
             ],
