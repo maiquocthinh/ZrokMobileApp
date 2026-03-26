@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/env_info.dart';
@@ -210,8 +211,42 @@ class AppManager extends ChangeNotifier {
         binaryPath = installed.first.localPath;
       }
     }
-    // Fallback: try system-wide 'zrok' in PATH
-    binaryPath ??= 'zrok';
+
+    // Pre-check: verify the binary exists before trying to run it
+    if (binaryPath == null) {
+      // No binary available at all — create an error task immediately
+      final errorTask = TaskEntry(
+        id: _uuid.v4().substring(0, 8),
+        envId: env.id,
+        command: parsed.fullCommand,
+        status: TaskStatus.error,
+        endTime: DateTime.now(),
+      );
+      errorTask.addLog('[error] No zrok binary found!');
+      errorTask.addLog('[info] Go to Settings > Versions to download a zrok binary first.');
+      _tasks.insert(0, errorTask);
+      notifyListeners();
+      return errorTask;
+    }
+
+    // Check if binary file exists on disk
+    if (binaryPath != 'zrok' && binaryPath != 'zrok2') {
+      final binaryFile = File(binaryPath);
+      if (!await binaryFile.exists()) {
+        final errorTask = TaskEntry(
+          id: _uuid.v4().substring(0, 8),
+          envId: env.id,
+          command: parsed.fullCommand,
+          status: TaskStatus.error,
+          endTime: DateTime.now(),
+        );
+        errorTask.addLog('[error] Binary not found at: $binaryPath');
+        errorTask.addLog('[info] The binary may have been deleted. Re-download from Settings > Versions.');
+        _tasks.insert(0, errorTask);
+        notifyListeners();
+        return errorTask;
+      }
+    }
 
     final task = TaskEntry(
       id: _uuid.v4().substring(0, 8),
@@ -317,6 +352,18 @@ class AppManager extends ChangeNotifier {
 
   List<TaskEntry> tasksForEnv(String envId) =>
       _tasks.where((t) => t.envId == envId).toList();
+
+  /// Remove a stopped/errored task from the list.
+  void removeTask(String taskId) {
+    _tasks.removeWhere((t) => t.id == taskId && !t.isRunning);
+    notifyListeners();
+  }
+
+  /// Clear all stopped/errored tasks.
+  void clearStoppedTasks() {
+    _tasks.removeWhere((t) => !t.isRunning);
+    notifyListeners();
+  }
 
   // --- History ---
   void _addToHistory(String command, EnvInfo env) {

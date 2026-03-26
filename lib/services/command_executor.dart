@@ -35,8 +35,11 @@ class CommandExecutor {
       // Build environment variables
       final env = <String, String>{
         ...Platform.environment,
-        if (envToken != null) 'ZROK_TOKEN': envToken,
-        if (apiEndpoint != null) 'ZROK_API_ENDPOINT': apiEndpoint,
+        // zrok v2.0.0+ uses ZROK2_* env vars
+        if (envToken != null) 'ZROK2_ENABLE_TOKEN': envToken,
+        if (envToken != null) 'ZROK_TOKEN': envToken, // v1 compat
+        if (apiEndpoint != null) 'ZROK2_API_ENDPOINT': apiEndpoint,
+        if (apiEndpoint != null) 'ZROK_API_ENDPOINT': apiEndpoint, // v1 compat
       };
 
       final process = await Process.start(
