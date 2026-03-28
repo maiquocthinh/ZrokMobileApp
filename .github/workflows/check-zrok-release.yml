@@ -1,0 +1,108 @@
+name: Check Zrok Releases
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check:
+    name: Check for new zrok releases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch upstream zrok releases
+        id: upstream
+        run: |
+          # Fetch all stable releases (not prerelease, not draft), paginated
+          VERSIONS=""
+          PAGE=1
+          while true; do
+            RESPONSE=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/openziti/zrok/releases?per_page=100&page=$PAGE")
+
+            # Break if empty
+            COUNT=$(echo "$RESPONSE" | jq 'length')
+            if [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
+              break
+            fi
+
+            # Extract stable release tags (skip prerelease and draft)
+            PAGE_VERSIONS=$(echo "$RESPONSE" | jq -r '.[] | select(.prerelease == false and .draft == false) | .tag_name')
+            VERSIONS="$VERSIONS $PAGE_VERSIONS"
+
+            PAGE=$((PAGE + 1))
+            # Safety: max 10 pages (1000 releases)
+            if [ "$PAGE" -gt 10 ]; then break; fi
+          done
+
+          # Write to file for next step
+          echo "$VERSIONS" | tr ' ' '\n' | sort -V | grep -v '^$' > /tmp/upstream_versions.txt
+          echo "Found $(wc -l < /tmp/upstream_versions.txt) upstream stable releases"
+          cat /tmp/upstream_versions.txt
+
+      - name: Fetch existing releases in this repo
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=""
+          PAGE=1
+          while true; do
+            RESPONSE=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+              -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100&page=$PAGE")
+
+            COUNT=$(echo "$RESPONSE" | jq 'length')
+            if [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
+              break
+            fi
+
+            PAGE_TAGS=$(echo "$RESPONSE" | jq -r '.[].tag_name')
+            EXISTING="$EXISTING $PAGE_TAGS"
+
+            PAGE=$((PAGE + 1))
+            if [ "$PAGE" -gt 10 ]; then break; fi
+          done
+
+          echo "$EXISTING" | tr ' ' '\n' | sort | grep -v '^$' > /tmp/existing_tags.txt
+          echo "Found $(wc -l < /tmp/existing_tags.txt) existing releases"
+          cat /tmp/existing_tags.txt
+
+      - name: Find missing releases and trigger builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TRIGGERED=0
+          while IFS= read -r VERSION; do
+            [ -z "$VERSION" ] && continue
+
+            # Our tag format: zrok-vX.Y.Z (upstream tag is vX.Y.Z)
+            OUR_TAG="zrok-${VERSION}"
+
+            if grep -qx "$OUR_TAG" /tmp/existing_tags.txt 2>/dev/null; then
+              echo "SKIP: $VERSION (already built as $OUR_TAG)"
+            else
+              echo "BUILD: $VERSION (will create $OUR_TAG)"
+
+              # Trigger build workflow
+              curl -s -X POST \
+                -H "Accept: application/vnd.github.v3+json" \
+                -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-zrok-binary.yml/dispatches" \
+                -d "{\"ref\": \"main\", \"inputs\": {\"zrok_version\": \"$VERSION\"}}"
+
+              TRIGGERED=$((TRIGGERED + 1))
+
+              # Small delay to avoid rate limiting
+              sleep 2
+            fi
+          done < /tmp/upstream_versions.txt
+
+          echo ""
+          echo "=== Summary ==="
+          echo "Triggered $TRIGGERED build(s)"

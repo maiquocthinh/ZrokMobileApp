@@ -1,21 +1,25 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Manages spawning and tracking real zrok CLI processes
 /// using Android native Method Channel for reliable binary execution.
+///
+/// The binary is bundled as libzrok.so in the APK's jniLibs directory,
+/// which Android extracts to the native lib dir with execute permissions.
 class CommandExecutor {
   static const _channel = MethodChannel('com.zrokapp.mobile/exec');
 
-  /// Map of taskId → whether it's running
   final Map<String, bool> _running = {};
-
-  /// Callbacks per task
   final Map<String, void Function(String)> _stdoutCallbacks = {};
   final Map<String, void Function(String)> _stderrCallbacks = {};
   final Map<String, void Function(int)> _exitCallbacks = {};
 
+  /// Cached path to the bundled binary.
+  String? _bundledBinaryPath;
+
   CommandExecutor() {
-    // Listen for native callbacks
     _channel.setMethodCallHandler((call) async {
       try {
         final args = call.arguments;
@@ -46,61 +50,28 @@ class CommandExecutor {
             _exitCallbacks.remove(taskId);
             break;
         }
-      } catch (_) {
-        // Silently ignore callback errors to prevent crash
-      }
+      } catch (_) {}
     });
   }
 
-  /// Make a binary file executable via native Android API.
-  Future<bool> makeExecutable(String path) async {
+  /// Get the path to the bundled zrok binary (libzrok.so in native lib dir).
+  /// This binary has execute permissions guaranteed by Android.
+  Future<String?> getBundledBinaryPath() async {
+    if (_bundledBinaryPath != null) return _bundledBinaryPath;
     try {
-      await _channel.invokeMethod('makeExecutable', {'path': path});
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// Copy binary to the app's executable directory and return the new path.
-  /// This ensures the binary is in a location with execute permissions.
-  Future<String?> copyToExecutableDir(String srcPath, String destName) async {
-    try {
-      final result = await _channel.invokeMethod<String>('copyToExecutableDir', {
-        'srcPath': srcPath,
-        'destName': destName,
-      });
-      return result;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Get the app's files directory path.
-  Future<String?> getFilesDir() async {
-    try {
-      return await _channel.invokeMethod<String>('getFilesDir');
+      _bundledBinaryPath = await _channel.invokeMethod<String>('getBundledBinaryPath');
+      return _bundledBinaryPath;
     } catch (e) {
       return null;
     }
   }
 
   /// Start a zrok command as a native Android process.
-  ///
-  /// [binaryPath] — absolute path to the zrok binary
-  /// [command] — the full command string (e.g. "share public localhost:8080")
-  /// [envToken] — the ZROK_TOKEN environment variable
-  /// [apiEndpoint] — the ZROK_API_ENDPOINT environment variable
-  /// [taskId] — unique identifier to track this process
-  /// [onStdout] — callback for each stdout line
-  /// [onStderr] — callback for each stderr line
-  /// [onExit] — callback when process exits, with exit code
-  ///
-  /// Returns true if process started successfully.
   Future<bool> start({
     required String binaryPath,
     required String command,
     required String taskId,
+    required String envId,
     String? envToken,
     String? apiEndpoint,
     required void Function(String line) onStdout,
@@ -110,21 +81,22 @@ class CommandExecutor {
     try {
       final args = command.split(RegExp(r'\s+'));
 
-      // Build environment variables
+      final docDir = await getApplicationDocumentsDirectory();
+      final envHome = Directory('${docDir.path}/envs/$envId');
+      if (!await envHome.exists()) await envHome.create(recursive: true);
+
       final env = <String, String>{
-        // zrok v2.0.0+ uses ZROK2_* env vars
+        'HOME': envHome.path,
         if (envToken != null) 'ZROK2_ENABLE_TOKEN': envToken,
-        if (envToken != null) 'ZROK_TOKEN': envToken, // v1 compat
+        if (envToken != null) 'ZROK_TOKEN': envToken,
         if (apiEndpoint != null) 'ZROK2_API_ENDPOINT': apiEndpoint,
-        if (apiEndpoint != null) 'ZROK_API_ENDPOINT': apiEndpoint, // v1 compat
+        if (apiEndpoint != null) 'ZROK_API_ENDPOINT': apiEndpoint,
       };
 
-      // Register callbacks
       _stdoutCallbacks[taskId] = onStdout;
       _stderrCallbacks[taskId] = onStderr;
       _exitCallbacks[taskId] = onExit;
 
-      // Start via native Method Channel
       await _channel.invokeMethod('startProcess', {
         'binaryPath': binaryPath,
         'args': args,
@@ -144,7 +116,6 @@ class CommandExecutor {
     }
   }
 
-  /// Stop a running process by taskId.
   Future<bool> stop(String taskId) async {
     try {
       await _channel.invokeMethod('stopProcess', {'taskId': taskId});
@@ -159,16 +130,12 @@ class CommandExecutor {
     }
   }
 
-  /// Stop all running processes.
   Future<void> stopAll() async {
     for (final taskId in _running.keys.toList()) {
       await stop(taskId);
     }
   }
 
-  /// Check if a task's process is still running.
   bool isRunning(String taskId) => _running.containsKey(taskId);
-
-  /// Get count of running processes.
   int get runningCount => _running.length;
 }

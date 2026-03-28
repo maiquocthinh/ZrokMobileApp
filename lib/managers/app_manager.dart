@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/env_info.dart';
@@ -27,6 +26,27 @@ class AppManager extends ChangeNotifier {
   final CommandExecutor _executor = CommandExecutor();
   final _uuid = const Uuid();
 
+  // Regex to strip remaining ANSI escape sequences missed by native code
+  static final _ansiRegex = RegExp(r'\x1B\[[0-9;]*[A-Za-z]|\x1B\][^\x07]*\x07|\x1B.');
+  // Unicode box-drawing (U+2500-U+257F), block elements (U+2580-U+259F),
+  // and other TUI decoration characters
+  static final _boxDrawingRegex = RegExp(r'[\u2500-\u259F\u2800-\u28FF]');
+
+  /// Sanitize a raw PTY log line: strip ANSI, box-drawing chars, and trim.
+  /// Returns empty string if the line is purely decoration/whitespace.
+  String _sanitizeLogLine(String line) {
+    var s = line;
+    // Strip ANSI escapes
+    s = s.replaceAll(_ansiRegex, '');
+    // Strip box-drawing / block characters
+    s = s.replaceAll(_boxDrawingRegex, '');
+    // Strip stray control characters (but keep newline, tab)
+    s = s.replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'), '');
+    // Collapse multiple spaces into one and trim
+    s = s.replaceAll(RegExp(r'  +'), ' ').trim();
+    return s;
+  }
+
   // --- State ---
   List<EnvInfo> _envs = [];
   final List<TaskEntry> _tasks = [];
@@ -48,15 +68,19 @@ class AppManager extends ChangeNotifier {
   List<QuickAction> get quickActions => _quickActions;
   AppSettings get settings => _settings;
   List<ZrokVersion> get versions => _versions;
-  List<ZrokVersion> get installedVersions => _versions.where((v) => v.isDownloaded).toList();
+  List<ZrokVersion> get installedVersions =>
+      _versions.where((v) => v.isDownloaded).toList();
   ConnectivityService get connectivity => _connectivity;
 
   String? get selectedEnvId => _selectedEnvId;
   EnvInfo? get selectedEnv => _selectedEnvId != null
-      ? _envs.cast<EnvInfo?>().firstWhere((e) => e?.id == _selectedEnvId, orElse: () => null)
+      ? _envs.cast<EnvInfo?>().firstWhere(
+          (e) => e?.id == _selectedEnvId,
+          orElse: () => null,
+        )
       : enabledEnvs.isNotEmpty
-          ? enabledEnvs.first
-          : null;
+      ? enabledEnvs.first
+      : null;
 
   // --- Init ---
   Future<void> init() async {
@@ -65,9 +89,15 @@ class AppManager extends ChangeNotifier {
 
     // Platform services — wrap each in try-catch so one failure
     // doesn't prevent the app from launching
-    try { await _notifications.init(); } catch (_) {}
-    try { await _foreground.init(); } catch (_) {}
-    try { await _connectivity.init(); } catch (_) {}
+    try {
+      await _notifications.init();
+    } catch (_) {}
+    try {
+      await _foreground.init();
+    } catch (_) {}
+    try {
+      await _connectivity.init();
+    } catch (_) {}
 
     // Load persisted data
     _envs = _storage.loadEnvs();
@@ -77,7 +107,9 @@ class AppManager extends ChangeNotifier {
     _versions = _storage.loadVersions();
 
     // Sync downloaded state (non-critical)
-    try { await _versionService.syncLocalState(_versions); } catch (_) {}
+    try {
+      await _versionService.syncLocalState(_versions);
+    } catch (_) {}
 
     // First-launch: create a default environment so the user can
     // start running commands immediately
@@ -100,7 +132,9 @@ class AppManager extends ChangeNotifier {
 
     // Connectivity listener for auto-reconnect
     try {
-      _connectivitySub = _connectivity.onConnectivityChanged.listen((connected) {
+      _connectivitySub = _connectivity.onConnectivityChanged.listen((
+        connected,
+      ) {
         if (connected && _settings.autoReconnect) {
           _handleReconnect();
         } else if (!connected) {
@@ -137,10 +171,14 @@ class AppManager extends ChangeNotifier {
     env.enabled = true;
     await _secureStorage.saveToken(envId, token);
     await _storage.saveEnvs(_envs);
+    _selectedEnvId = envId; // Select it first so runTask uses it
+    
+    // Execute native zrok enable to physically connect the environment
+    await runTask('enable $token');
+    
     if (_settings.notificationsEnabled) {
       _notifications.showEnvReady(env.name);
     }
-    _selectedEnvId ??= envId;
     notifyListeners();
   }
 
@@ -148,14 +186,24 @@ class AppManager extends ChangeNotifier {
     final env = getEnv(envId);
     if (env == null) return;
     // Stop all running tasks for this env
-    for (final task in _tasks.where((t) => t.envId == envId && t.isRunning).toList()) {
+    for (final task
+        in _tasks.where((t) => t.envId == envId && t.isRunning).toList()) {
       await stopTask(task.id);
     }
+    
+    // Execute native zrok disable to cleanly remove the environment from zrok
+    final previousEnv = _selectedEnvId;
+    _selectedEnvId = envId;
+    await runTask('disable');
+    
     env.enabled = false;
     await _secureStorage.deleteToken(envId);
     await _storage.saveEnvs(_envs);
+    
     if (_selectedEnvId == envId) {
       _selectedEnvId = enabledEnvs.isNotEmpty ? enabledEnvs.first.id : null;
+    } else {
+      _selectedEnvId = previousEnv;
     }
     notifyListeners();
   }
@@ -196,14 +244,20 @@ class AppManager extends ChangeNotifier {
     final parsed = CommandParser.parse(command);
     if (parsed == null) return null;
 
-    final versionTag = env.zrokVersion ?? _settings.defaultZrokVersion;
     String? binaryPath;
 
-    // Find the binary to execute
-    if (versionTag != null) {
-      binaryPath = await _versionService.getLocalPath(versionTag);
+    // Priority 1 (Primary): Bundled binary from APK native lib dir (always has exec permission on Android 10+)
+    binaryPath = await _executor.getBundledBinaryPath();
+
+    // Priority 2: Use the specific downloaded version assigned to this environment
+    if (binaryPath == null) {
+      final versionTag = env.zrokVersion ?? _settings.defaultZrokVersion;
+      if (versionTag != null) {
+        binaryPath = await _versionService.getLocalPath(versionTag);
+      }
     }
-    // Fallback: use latest installed version
+
+    // Priority 3: Any downloaded version
     if (binaryPath == null) {
       final installed = _versions.where((v) => v.isDownloaded).toList();
       if (installed.isNotEmpty) {
@@ -212,9 +266,8 @@ class AppManager extends ChangeNotifier {
       }
     }
 
-    // Pre-check: verify the binary exists before trying to run it
+    // No binary found at all
     if (binaryPath == null) {
-      // No binary available at all — create an error task immediately
       final errorTask = TaskEntry(
         id: _uuid.v4().substring(0, 8),
         envId: env.id,
@@ -223,29 +276,12 @@ class AppManager extends ChangeNotifier {
         endTime: DateTime.now(),
       );
       errorTask.addLog('[error] No zrok binary found!');
-      errorTask.addLog('[info] Go to Settings > Versions to download a zrok binary first.');
+      errorTask.addLog(
+        '[info] Download a version from Settings > Versions, or rebuild with CI/CD.',
+      );
       _tasks.insert(0, errorTask);
       notifyListeners();
       return errorTask;
-    }
-
-    // Check if binary file exists on disk
-    if (binaryPath != 'zrok' && binaryPath != 'zrok2') {
-      final binaryFile = File(binaryPath);
-      if (!await binaryFile.exists()) {
-        final errorTask = TaskEntry(
-          id: _uuid.v4().substring(0, 8),
-          envId: env.id,
-          command: parsed.fullCommand,
-          status: TaskStatus.error,
-          endTime: DateTime.now(),
-        );
-        errorTask.addLog('[error] Binary not found at: $binaryPath');
-        errorTask.addLog('[info] The binary may have been deleted. Re-download from Settings > Versions.');
-        _tasks.insert(0, errorTask);
-        notifyListeners();
-        return errorTask;
-      }
     }
 
     final task = TaskEntry(
@@ -254,7 +290,7 @@ class AppManager extends ChangeNotifier {
       command: parsed.fullCommand,
     );
 
-    task.addLog('[info] Starting: zrok ${parsed.fullCommand}');
+    task.addLog('[info] Starting: zrok2 ${parsed.fullCommand}');
     task.addLog('[info] Env: ${env.name} (${env.endpoint})');
     task.addLog('[info] Binary: $binaryPath');
 
@@ -264,20 +300,25 @@ class AppManager extends ChangeNotifier {
 
     // Get token for this env
     String? token;
-    try { token = await _secureStorage.readToken(env.id); } catch (_) {}
+    try {
+      token = await _secureStorage.readToken(env.id);
+    } catch (_) {}
 
     // Spawn real process
     await _executor.start(
       binaryPath: binaryPath,
       command: parsed.fullCommand,
       taskId: task.id,
+      envId: env.id,
       envToken: token,
       apiEndpoint: env.endpoint,
       onStdout: (line) {
-        task.addLog(line);
+        final clean = _sanitizeLogLine(line);
+        if (clean.isEmpty) return; // Skip empty/decoration lines
+        task.addLog(clean);
         // Detect share URL from zrok output
-        if (line.contains('https://') && task.shareUrl == null) {
-          final urlMatch = RegExp(r'(https://\S+)').firstMatch(line);
+        if (clean.contains('https://') && task.shareUrl == null) {
+          final urlMatch = RegExp(r'(https://\S+)').firstMatch(clean);
           if (urlMatch != null) {
             task.shareUrl = urlMatch.group(1);
             if (_settings.notificationsEnabled) {
@@ -288,7 +329,9 @@ class AppManager extends ChangeNotifier {
         notifyListeners();
       },
       onStderr: (line) {
-        task.addLog('[err] $line');
+        final clean = _sanitizeLogLine(line);
+        if (clean.isEmpty) return;
+        task.addLog('[err] $clean');
         notifyListeners();
       },
       onExit: (exitCode) {
@@ -311,13 +354,18 @@ class AppManager extends ChangeNotifier {
     );
 
     // Foreground service
-    try { await _foreground.start(runningTaskCount); } catch (_) {}
+    try {
+      await _foreground.start(runningTaskCount);
+    } catch (_) {}
 
     return task;
   }
 
   Future<void> stopTask(String taskId) async {
-    final task = _tasks.cast<TaskEntry?>().firstWhere((t) => t?.id == taskId, orElse: () => null);
+    final task = _tasks.cast<TaskEntry?>().firstWhere(
+      (t) => t?.id == taskId,
+      orElse: () => null,
+    );
     if (task == null || !task.isRunning) return;
 
     // Kill the real process
@@ -347,8 +395,10 @@ class AppManager extends ChangeNotifier {
     }
   }
 
-  TaskEntry? getTask(String id) =>
-      _tasks.cast<TaskEntry?>().firstWhere((t) => t?.id == id, orElse: () => null);
+  TaskEntry? getTask(String id) => _tasks.cast<TaskEntry?>().firstWhere(
+    (t) => t?.id == id,
+    orElse: () => null,
+  );
 
   List<TaskEntry> tasksForEnv(String envId) =>
       _tasks.where((t) => t.envId == envId).toList();
@@ -395,23 +445,39 @@ class AppManager extends ChangeNotifier {
   List<HistoryEntry> searchHistory(String query) {
     if (query.isEmpty) return _history;
     final q = query.toLowerCase();
-    return _history.where((e) => e.command.toLowerCase().contains(q) || e.envName.toLowerCase().contains(q)).toList();
+    return _history
+        .where(
+          (e) =>
+              e.command.toLowerCase().contains(q) ||
+              e.envName.toLowerCase().contains(q),
+        )
+        .toList();
   }
 
   // --- Quick Actions ---
   Future<void> addQuickAction(String name, String command, String envId) async {
-    _quickActions.add(QuickAction(
-      id: _uuid.v4().substring(0, 8),
-      name: name,
-      command: command,
-      envId: envId,
-    ));
+    _quickActions.add(
+      QuickAction(
+        id: _uuid.v4().substring(0, 8),
+        name: name,
+        command: command,
+        envId: envId,
+      ),
+    );
     await _storage.saveQuickActions(_quickActions);
     notifyListeners();
   }
 
-  Future<void> updateQuickAction(String id, String name, String command, String envId) async {
-    final action = _quickActions.cast<QuickAction?>().firstWhere((a) => a?.id == id, orElse: () => null);
+  Future<void> updateQuickAction(
+    String id,
+    String name,
+    String command,
+    String envId,
+  ) async {
+    final action = _quickActions.cast<QuickAction?>().firstWhere(
+      (a) => a?.id == id,
+      orElse: () => null,
+    );
     if (action == null) return;
     action.name = name;
     action.command = command;
@@ -488,7 +554,9 @@ class AppManager extends ChangeNotifier {
 
   Future<void> deleteVersion(ZrokVersion version) async {
     // Check if any env uses this version
-    final envUsing = _envs.where((e) => e.zrokVersion == version.version).toList();
+    final envUsing = _envs
+        .where((e) => e.zrokVersion == version.version)
+        .toList();
     for (final env in envUsing) {
       env.zrokVersion = null;
     }
@@ -505,7 +573,8 @@ class AppManager extends ChangeNotifier {
 
   // --- Auto-Reconnect ---
   Future<void> _handleReconnect() async {
-    for (final task in _tasks.where((t) => t.status == TaskStatus.error).toList()) {
+    for (final task
+        in _tasks.where((t) => t.status == TaskStatus.error).toList()) {
       var reconnected = false;
       for (var attempt = 1; attempt <= 3 && !reconnected; attempt++) {
         task.addLog('[info] Reconnecting (attempt $attempt/3)...');

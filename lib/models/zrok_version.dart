@@ -1,6 +1,7 @@
 class ZrokVersion {
   final String version;
   final String downloadUrl;
+  final String assetName;
   String? localPath;
   bool isDownloaded;
   int sizeBytes;
@@ -9,6 +10,7 @@ class ZrokVersion {
   ZrokVersion({
     required this.version,
     required this.downloadUrl,
+    this.assetName = 'libzrok.so',
     this.localPath,
     this.isDownloaded = false,
     this.sizeBytes = 0,
@@ -26,6 +28,7 @@ class ZrokVersion {
   Map<String, dynamic> toJson() => {
         'version': version,
         'downloadUrl': downloadUrl,
+        'assetName': assetName,
         'localPath': localPath,
         'isDownloaded': isDownloaded,
         'sizeBytes': sizeBytes,
@@ -35,6 +38,7 @@ class ZrokVersion {
   factory ZrokVersion.fromJson(Map<String, dynamic> json) => ZrokVersion(
         version: json['version'] as String,
         downloadUrl: json['downloadUrl'] as String,
+        assetName: json['assetName'] as String? ?? 'libzrok.so',
         localPath: json['localPath'] as String?,
         isDownloaded: json['isDownloaded'] as bool? ?? false,
         sizeBytes: json['sizeBytes'] as int? ?? 0,

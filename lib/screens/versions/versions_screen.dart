@@ -25,11 +25,16 @@ class _VersionsScreenState extends State<VersionsScreen> {
 
   void _download(AppManager manager, ZrokVersion version) {
     setState(() => _downloadProgress[version.version] = 0);
-    manager.downloadVersion(version).listen(
-      (progress) => setState(() => _downloadProgress[version.version] = progress),
-      onDone: () => setState(() => _downloadProgress.remove(version.version)),
-      onError: (_) => setState(() => _downloadProgress.remove(version.version)),
-    );
+    manager
+        .downloadVersion(version)
+        .listen(
+          (progress) =>
+              setState(() => _downloadProgress[version.version] = progress),
+          onDone: () =>
+              setState(() => _downloadProgress.remove(version.version)),
+          onError: (_) =>
+              setState(() => _downloadProgress.remove(version.version)),
+        );
   }
 
   @override
@@ -63,7 +68,12 @@ class _VersionsScreenState extends State<VersionsScreen> {
             else ...[
               SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (ctx, index) => _buildVersionCard(context, manager, versions[index], index == 0),
+                  (ctx, index) => _buildVersionCard(
+                    context,
+                    manager,
+                    versions[index],
+                    index == 0,
+                  ),
                   childCount: versions.length,
                 ),
               ),
@@ -75,8 +85,11 @@ class _VersionsScreenState extends State<VersionsScreen> {
                     final mb = (bytes / (1024 * 1024)).toStringAsFixed(1);
                     return Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Text('Storage: $mb MB used',
-                          style: Theme.of(context).textTheme.labelSmall, textAlign: TextAlign.center),
+                      child: Text(
+                        'Storage: $mb MB used',
+                        style: Theme.of(context).textTheme.labelSmall,
+                        textAlign: TextAlign.center,
+                      ),
                     );
                   },
                 ),
@@ -88,7 +101,12 @@ class _VersionsScreenState extends State<VersionsScreen> {
     );
   }
 
-  Widget _buildVersionCard(BuildContext context, AppManager manager, ZrokVersion version, bool isLatest) {
+  Widget _buildVersionCard(
+    BuildContext context,
+    AppManager manager,
+    ZrokVersion version,
+    bool isLatest,
+  ) {
     final usedBy = manager.envsUsingVersion(version.version);
     final isDefault = manager.settings.defaultZrokVersion == version.version;
     final progress = _downloadProgress[version.version];
@@ -103,29 +121,49 @@ class _VersionsScreenState extends State<VersionsScreen> {
             // Header: version + badges
             Row(
               children: [
-                Text(version.displayVersion,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  version.displayVersion,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                ),
                 if (isLatest) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.teal.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: Text('latest', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppTheme.teal)),
+                    child: Text(
+                      'latest',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.labelSmall?.copyWith(color: AppTheme.teal),
+                    ),
                   ),
                 ],
                 if (isDefault) ...[
                   const SizedBox(width: 8),
                   const Icon(Icons.push_pin, size: 14, color: AppTheme.amber),
                   const SizedBox(width: 2),
-                  Text('Default', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppTheme.amber)),
+                  Text(
+                    'Default',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: AppTheme.amber),
+                  ),
                 ],
                 const Spacer(),
                 if (version.isDownloaded)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.teal.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
@@ -133,15 +171,26 @@ class _VersionsScreenState extends State<VersionsScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.check_circle, size: 12, color: AppTheme.teal),
+                        const Icon(
+                          Icons.check_circle,
+                          size: 12,
+                          color: AppTheme.teal,
+                        ),
                         const SizedBox(width: 4),
-                        Text('Installed', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppTheme.teal)),
+                        Text(
+                          'Installed',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: AppTheme.teal),
+                        ),
                       ],
                     ),
                   )
                 else
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.primaryColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(4),
@@ -149,9 +198,17 @@ class _VersionsScreenState extends State<VersionsScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.cloud_download_outlined, size: 12, color: Color(0xFFC4C0FF)),
+                        const Icon(
+                          Icons.cloud_download_outlined,
+                          size: 12,
+                          color: Color(0xFFC4C0FF),
+                        ),
                         const SizedBox(width: 4),
-                        Text('Available', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: const Color(0xFFC4C0FF))),
+                        Text(
+                          'Available',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(color: const Color(0xFFC4C0FF)),
+                        ),
                       ],
                     ),
                   ),
@@ -165,7 +222,10 @@ class _VersionsScreenState extends State<VersionsScreen> {
             ),
             if (usedBy.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text('Used by: ${usedBy.join(", ")}', style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                'Used by: ${usedBy.join(", ")}',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
             ],
 
             // Download progress
@@ -177,7 +237,10 @@ class _VersionsScreenState extends State<VersionsScreen> {
                 color: AppTheme.teal,
               ),
               const SizedBox(height: 4),
-              Text('${(progress * 100).toInt()}%', style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                '${(progress * 100).toInt()}%',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
             ],
 
             const SizedBox(height: 10),
@@ -188,7 +251,9 @@ class _VersionsScreenState extends State<VersionsScreen> {
                   ElevatedButton.icon(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     label: const Text('Download'),
-                    onPressed: version.downloadUrl.isNotEmpty ? () => _download(manager, version) : null,
+                    onPressed: version.downloadUrl.isNotEmpty
+                        ? () => _download(manager, version)
+                        : null,
                   ),
                 if (version.isDownloaded && !isDefault)
                   OutlinedButton(
@@ -209,17 +274,29 @@ class _VersionsScreenState extends State<VersionsScreen> {
     );
   }
 
-  void _confirmDelete(BuildContext context, AppManager manager, ZrokVersion version) {
+  void _confirmDelete(
+    BuildContext context,
+    AppManager manager,
+    ZrokVersion version,
+  ) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Version'),
-        content: Text('Delete ${version.displayVersion}? Envs using this version will reset to default.'),
+        content: Text(
+          'Delete ${version.displayVersion}? Envs using this version will reset to default.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            onPressed: () { manager.deleteVersion(version); Navigator.pop(ctx); },
+            onPressed: () {
+              manager.deleteVersion(version);
+              Navigator.pop(ctx);
+            },
             child: const Text('Delete'),
           ),
         ],

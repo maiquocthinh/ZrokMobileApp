@@ -8,8 +8,14 @@ class CommandParser {
     final trimmed = input.trim();
     if (trimmed.isEmpty) return null;
 
-    // Remove "zrok" prefix if present
-    final clean = trimmed.startsWith('zrok ') ? trimmed.substring(5).trim() : trimmed;
+    // Remove "zrok" or "zrok2" prefix if present
+    String clean = trimmed;
+    if (trimmed.startsWith('zrok ')) {
+      clean = trimmed.substring(5).trim();
+    } else if (trimmed.startsWith('zrok2 ')) {
+      clean = trimmed.substring(6).trim();
+    }
+    
     final parts = clean.split(RegExp(r'\s+'));
     if (parts.isEmpty) return null;
 
