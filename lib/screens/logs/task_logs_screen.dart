@@ -86,22 +86,7 @@ class _TaskLogsScreenState extends State<TaskLogsScreen> {
     }
   }
 
-  String _levelLabel(_LogLevel level) {
-    switch (level) {
-      case _LogLevel.error:
-        return 'ERR';
-      case _LogLevel.warning:
-        return 'WRN';
-      case _LogLevel.url:
-        return 'URL';
-      case _LogLevel.info:
-        return 'INF';
-      case _LogLevel.request:
-        return 'REQ';
-      case _LogLevel.plain:
-        return '   ';
-    }
-  }
+
 
   IconData _levelIcon(_LogLevel level) {
     switch (level) {
@@ -163,12 +148,14 @@ class _TaskLogsScreenState extends State<TaskLogsScreen> {
         _scrollToBottom();
 
         // Count log levels
-        int errorCount = 0, warnCount = 0, infoCount = 0;
+        int errorCount = 0, warnCount = 0;
         for (final log in allLogs) {
           final level = _parseLevel(log);
-          if (level == _LogLevel.error) errorCount++;
-          else if (level == _LogLevel.warning) warnCount++;
-          else if (level == _LogLevel.info) infoCount++;
+          if (level == _LogLevel.error) {
+            errorCount++;
+          } else if (level == _LogLevel.warning) {
+            warnCount++;
+          }
         }
 
         return Scaffold(
