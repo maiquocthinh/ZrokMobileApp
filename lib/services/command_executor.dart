@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Manages spawning and tracking real zrok CLI processes
 /// using Android native Method Channel for reliable binary execution.
@@ -69,6 +71,7 @@ class CommandExecutor {
     required String binaryPath,
     required String command,
     required String taskId,
+    required String envId,
     String? envToken,
     String? apiEndpoint,
     required void Function(String line) onStdout,
@@ -78,7 +81,12 @@ class CommandExecutor {
     try {
       final args = command.split(RegExp(r'\s+'));
 
+      final docDir = await getApplicationDocumentsDirectory();
+      final envHome = Directory('${docDir.path}/envs/$envId');
+      if (!await envHome.exists()) await envHome.create(recursive: true);
+
       final env = <String, String>{
+        'HOME': envHome.path,
         if (envToken != null) 'ZROK2_ENABLE_TOKEN': envToken,
         if (envToken != null) 'ZROK_TOKEN': envToken,
         if (apiEndpoint != null) 'ZROK2_API_ENDPOINT': apiEndpoint,

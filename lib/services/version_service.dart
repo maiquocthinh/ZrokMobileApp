@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/zrok_version.dart';
 
 class VersionService {
-  static const _apiUrl = 'https://api.github.com/repos/openziti/zrok/releases';
+  static const _apiUrl = 'https://api.github.com/repos/maiquocthinh/ZrokMobileApp/releases';
   static const _versionDir = 'zrok_versions';
   static const _channel = MethodChannel('com.zrokapp.mobile/exec');
 
@@ -31,24 +31,38 @@ class VersionService {
       final versions = <ZrokVersion>[];
 
       for (final release in releases) {
-        final tagName = (release['tag_name'] as String?)?.replaceFirst('v', '') ?? '';
-        if (tagName.isEmpty) continue;
+        // Tag format: zrok-vX.Y.Z → extract X.Y.Z
+        final tagName = (release['tag_name'] as String?) ?? '';
+        final versionMatch = RegExp(r'zrok-v(.+)').firstMatch(tagName);
+        final version = versionMatch?.group(1) ?? tagName.replaceFirst('v', '');
+        if (version.isEmpty) continue;
 
         final assets = release['assets'] as List? ?? [];
         String? downloadUrl;
+        String assetName = 'libzrok.so';
         int size = 0;
         for (final asset in assets) {
           final name = (asset['name'] as String?) ?? '';
+          // New format: raw binary libzrok.so
+          if (name == 'libzrok.so') {
+            downloadUrl = asset['browser_download_url'] as String?;
+            size = asset['size'] as int? ?? 0;
+            assetName = name;
+            break;
+          }
+          // Fallback: old tar.gz format from upstream
           if (name.contains('linux') && name.contains('arm64') && name.endsWith('.tar.gz')) {
             downloadUrl = asset['browser_download_url'] as String?;
             size = asset['size'] as int? ?? 0;
+            assetName = name;
             break;
           }
         }
 
         versions.add(ZrokVersion(
-          version: tagName,
+          version: version,
           downloadUrl: downloadUrl ?? '',
+          assetName: assetName,
           sizeBytes: size,
           releaseDate: DateTime.tryParse(release['published_at'] as String? ?? ''),
         ));
@@ -85,7 +99,7 @@ class VersionService {
     return dir.path;
   }
 
-  /// Download, extract, chmod, and store the zrok binary.
+  /// Download, extract (if needed), chmod, and store the zrok binary.
   /// Returns a stream of progress (0.0 to 1.0).
   Stream<double> downloadVersion(ZrokVersion version) async* {
     if (version.downloadUrl.isEmpty) {
@@ -95,7 +109,67 @@ class VersionService {
 
     _log('=== Download started: v${version.version} ===');
     _log('URL: ${version.downloadUrl}');
+    _log('Asset: ${version.assetName}');
 
+    final isRawBinary = !version.assetName.endsWith('.tar.gz');
+
+    if (isRawBinary) {
+      yield* _downloadRawBinary(version);
+    } else {
+      yield* _downloadTarGz(version);
+    }
+  }
+
+  /// Download a raw binary file (e.g., libzrok.so from our CI builds).
+  Stream<double> _downloadRawBinary(ZrokVersion version) async* {
+    final dir = await _getVersionDir();
+    final versionDir = Directory('${dir.path}/v${version.version}');
+    if (!await versionDir.exists()) {
+      await versionDir.create(recursive: true);
+    }
+
+    final binaryPath = '${versionDir.path}/zrok2';
+    _log('Downloading raw binary to: $binaryPath');
+
+    // Step 1: Download
+    final request = http.Request('GET', Uri.parse(version.downloadUrl));
+    final response = await http.Client().send(request);
+    _log('HTTP status: ${response.statusCode}, content-length: ${response.contentLength}');
+
+    final totalBytes = response.contentLength ?? version.sizeBytes;
+    var receivedBytes = 0;
+
+    final binaryFile = File(binaryPath);
+    final sink = binaryFile.openWrite();
+
+    await for (final chunk in response.stream) {
+      sink.add(chunk);
+      receivedBytes += chunk.length;
+      if (totalBytes > 0) {
+        yield (receivedBytes / totalBytes) * 0.9;
+      }
+    }
+    await sink.close();
+
+    final fileSize = await binaryFile.length();
+    _log('Downloaded: $receivedBytes bytes, file size: $fileSize');
+    yield 0.92;
+
+    // Step 2: Set executable permissions
+    await _makeExecutable(binaryPath);
+    yield 0.95;
+
+    // Step 3: Copy to exec dir
+    final finalPath = await _copyToExecDir(binaryPath, version.version);
+
+    version.localPath = finalPath ?? binaryPath;
+    version.isDownloaded = true;
+    _log('=== Download complete: ${version.localPath} ===');
+    yield 1.0;
+  }
+
+  /// Download a .tar.gz archive (fallback for old upstream releases).
+  Stream<double> _downloadTarGz(ZrokVersion version) async* {
     final dir = await _getVersionDir();
     final versionDir = Directory('${dir.path}/v${version.version}');
     if (!await versionDir.exists()) {
@@ -160,18 +234,7 @@ class VersionService {
     try { await archiveFile.delete(); } catch (_) {}
     yield 0.90;
 
-    // Step 3: List all extracted files for debugging
-    _log('Listing extracted files:');
-    await for (final entity in versionDir.list(recursive: true)) {
-      if (entity is File) {
-        final stat = await entity.stat();
-        _log('  ${entity.path} (${stat.size} bytes, mode: ${stat.mode.toRadixString(8)})');
-      } else {
-        _log('  ${entity.path}/ (directory)');
-      }
-    }
-
-    // Step 4: Find the extracted binary
+    // Step 3: Find the extracted binary
     String? extractedPath;
     for (final name in _binaryNames) {
       final candidate = File('${versionDir.path}/$name');
@@ -204,13 +267,24 @@ class VersionService {
       return;
     }
 
-    // Step 5: Set executable permissions
-    _log('Setting executable permissions on: $extractedPath');
+    // Step 4: Set executable permissions + copy
+    await _makeExecutable(extractedPath);
+    final finalPath = await _copyToExecDir(extractedPath, version.version);
 
-    // Method 1: Native Android API (File.setExecutable via Method Channel)
+    version.localPath = finalPath ?? extractedPath;
+    version.isDownloaded = true;
+    _log('=== Download complete: ${version.localPath} ===');
+    yield 1.0;
+  }
+
+  /// Set executable permissions on a file.
+  Future<void> _makeExecutable(String path) async {
+    _log('Setting executable permissions on: $path');
+
+    // Method 1: Native Android API
     bool chmodOk = false;
     try {
-      final result = await _channel.invokeMethod<bool>('makeExecutable', {'path': extractedPath});
+      final result = await _channel.invokeMethod<bool>('makeExecutable', {'path': path});
       chmodOk = result == true;
       _log('Native makeExecutable: $chmodOk');
     } catch (e) {
@@ -220,7 +294,7 @@ class VersionService {
     // Method 2: chmod command
     if (!chmodOk) {
       try {
-        final result = await Process.run('chmod', ['755', extractedPath]);
+        final result = await Process.run('chmod', ['755', path]);
         _log('chmod 755 exit: ${result.exitCode}');
         if (result.exitCode == 0) chmodOk = true;
       } catch (e) {
@@ -228,37 +302,26 @@ class VersionService {
       }
     }
 
-    // Verify final state
-    final finalFile = File(extractedPath);
-    final finalStat = await finalFile.stat();
-    _log('Final binary: ${finalFile.path}');
-    _log('  size: ${finalStat.size} bytes');
-    _log('  mode: ${finalStat.mode.toRadixString(8)}');
-    _log('  chmod ok: $chmodOk');
+    // Verify
+    final stat = await File(path).stat();
+    _log('  size: ${stat.size} bytes, mode: ${stat.mode.toRadixString(8)}, chmod ok: $chmodOk');
+  }
 
-    // Step 6: Also copy to exec bin dir as a backup
+  /// Copy binary to the exec bin dir. Returns the new path, or null on failure.
+  Future<String?> _copyToExecDir(String srcPath, String version) async {
     try {
       final result = await _channel.invokeMethod<String>('copyToExecutableDir', {
-        'srcPath': extractedPath,
-        'destName': 'zrok_v${version.version}',
+        'srcPath': srcPath,
+        'destName': 'zrok_v$version',
       });
       if (result != null) {
         _log('Copy to exec dir: $result');
-        version.localPath = result;
-        version.isDownloaded = true;
-        _log('=== Download complete (exec dir): ${version.localPath} ===');
-        yield 1.0;
-        return;
+        return result;
       }
     } catch (e) {
       _log('Copy to exec dir error: $e');
     }
-
-    // Use extracted path directly
-    version.localPath = extractedPath;
-    version.isDownloaded = true;
-    _log('=== Download complete (in-place): ${version.localPath} ===');
-    yield 1.0;
+    return null;
   }
 
   /// Manual tar.gz extraction fallback using dart:io

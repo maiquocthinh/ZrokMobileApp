@@ -1,0 +1,124 @@
+name: Build Zrok for Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      zrok_version:
+        description: 'Zrok version tag to build (e.g., v2.0.0, v1.1.11)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build zrok Android arm64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate input
+        run: |
+          if [ -z "${{ inputs.zrok_version }}" ]; then
+            echo "Error: zrok_version is required"
+            exit 1
+          fi
+          echo "Building zrok ${{ inputs.zrok_version }} for Android arm64"
+
+      - name: Checkout zrok source
+        uses: actions/checkout@v4
+        with:
+          repository: openziti/zrok
+          ref: ${{ inputs.zrok_version }}
+          path: zrok-source
+
+      - name: Detect Go version from go.mod
+        id: go-version
+        run: |
+          GO_VERSION=$(grep '^go ' zrok-source/go.mod | awk '{print $2}')
+          echo "version=$GO_VERSION" >> $GITHUB_OUTPUT
+          echo "Go version from go.mod: $GO_VERSION"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go-version.outputs.version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Build UI assets (if present)
+        working-directory: zrok-source
+        run: |
+          if [ -d "ui" ] && [ -f "ui/package.json" ]; then
+            echo "Building ui..."
+            (cd ui && npm install && npm run build)
+          else
+            echo "No ui/ directory, skipping"
+          fi
+
+          if [ -d "agent/agentUi" ] && [ -f "agent/agentUi/package.json" ]; then
+            echo "Building agent/agentUi..."
+            (cd agent/agentUi && npm install && npm run build)
+          else
+            echo "No agent/agentUi/ directory, skipping"
+          fi
+
+      - name: Detect cmd path (zrok vs zrok2)
+        id: cmd-path
+        working-directory: zrok-source
+        run: |
+          if [ -d "./cmd/zrok2" ]; then
+            echo "path=./cmd/zrok2" >> $GITHUB_OUTPUT
+            echo "Detected: ./cmd/zrok2 (v2.x)"
+          elif [ -d "./cmd/zrok" ]; then
+            echo "path=./cmd/zrok" >> $GITHUB_OUTPUT
+            echo "Detected: ./cmd/zrok (v1.x)"
+          else
+            echo "Error: No cmd/zrok or cmd/zrok2 found!"
+            ls -la cmd/
+            exit 1
+          fi
+
+      - name: Build for Android arm64
+        working-directory: zrok-source
+        env:
+          CGO_ENABLED: '1'
+          GOOS: android
+          GOARCH: arm64
+          CC: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+        run: |
+          echo "CC=$CC"
+          echo "Building ${{ steps.cmd-path.outputs.path }}..."
+
+          # Verify NDK clang exists
+          if [ ! -f "$CC" ]; then
+            echo "Error: NDK clang not found at $CC"
+            echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+            ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/ | head -20
+            exit 1
+          fi
+
+          go build -ldflags="-s -w" -o libzrok.so ${{ steps.cmd-path.outputs.path }}
+
+          echo "Build complete!"
+          ls -lh libzrok.so
+          file libzrok.so
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zrok-${{ inputs.zrok_version }}
+          name: "Zrok ${{ inputs.zrok_version }} (Android arm64)"
+          body: |
+            Zrok binary for Android arm64, built from [openziti/zrok@${{ inputs.zrok_version }}](https://github.com/openziti/zrok/releases/tag/${{ inputs.zrok_version }}).
+
+            - **Target**: Android arm64 (API 21+, Android 5.0+)
+            - **CGO**: Enabled (sqlite3)
+            - **Compiler**: Android NDK clang (aarch64-linux-android21)
+            - **Source cmd**: `${{ steps.cmd-path.outputs.path }}`
+          files: zrok-source/libzrok.so
+          draft: false
+          prerelease: false

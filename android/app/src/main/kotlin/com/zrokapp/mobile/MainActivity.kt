@@ -15,6 +15,7 @@ class MainActivity : FlutterActivity() {
     private val EXEC_CHANNEL = "com.zrokapp.mobile/exec"
 
     private val processes = mutableMapOf<String, Process>()
+    private val nativeProcesses = mutableMapOf<String, Int>()  // taskId -> native PID (memfd exec)
     private var execChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -71,7 +72,7 @@ class MainActivity : FlutterActivity() {
                     }
                     "isRunning" -> {
                         val taskId = call.argument<String>("taskId")
-                        result.success(taskId != null && processes.containsKey(taskId))
+                        result.success(taskId != null && (processes.containsKey(taskId) || nativeProcesses.containsKey(taskId)))
                     }
                     "makeExecutable" -> {
                         val path = call.argument<String>("path")
@@ -90,6 +91,17 @@ class MainActivity : FlutterActivity() {
                     }
                     "getFilesDir" -> result.success(filesDir.absolutePath)
                     "getNativeLibDir" -> result.success(applicationInfo.nativeLibraryDir)
+                    "getBundledBinaryPath" -> {
+                        val nativeLibDir = applicationInfo.nativeLibraryDir
+                        val bundled = File(nativeLibDir, "libzrok.so")
+                        if (bundled.exists() && bundled.canExecute()) {
+                            Log.d(TAG, "Bundled binary found: ${bundled.absolutePath} (canExec=${bundled.canExecute()})")
+                            result.success(bundled.absolutePath)
+                        } else {
+                            Log.w(TAG, "No bundled binary at: ${bundled.absolutePath} (exists=${bundled.exists()}, canExec=${bundled.canExecute()})")
+                            result.success(null)
+                        }
+                    }
                     "copyToExecutableDir" -> {
                         val srcPath = call.argument<String>("srcPath")
                         val destName = call.argument<String>("destName") ?: "zrok"
@@ -128,6 +140,10 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         processes.values.forEach { try { it.destroy() } catch (_: Exception) {} }
         processes.clear()
+        nativeProcesses.values.forEach { pid ->
+            try { NativeExec.nativeKill(pid) } catch (_: Exception) {}
+        }
+        nativeProcesses.clear()
         execChannel = null
         super.onDestroy()
     }
@@ -140,16 +156,240 @@ class MainActivity : FlutterActivity() {
     ) {
         Log.d(TAG, "Starting: $binaryPath ${args.joinToString(" ")}")
 
-        // Try direct execution first, then linker64 fallback
-        val process = tryStartProcess(binaryPath, args, envVars)
-            ?: throw Exception("Permission denied: cannot execute $binaryPath. " +
-                "Binary must be in native lib dir (bundled in APK) or on a device that allows execution.")
-
-        processes[taskId] = process
-
         val handler = Handler(Looper.getMainLooper())
         val channel = execChannel
 
+        // Inject HOME environment variable for zrok to store its configuration (e.g. ~/.zrok)
+        val finalEnvVars = (envVars ?: emptyMap()).toMutableMap()
+        if (!finalEnvVars.containsKey("HOME")) {
+            finalEnvVars["HOME"] = filesDir.absolutePath
+        }
+
+        // Strategy 1 (Primary): PTY-based native execution
+        // Provides a real /dev/tty so zrok TUI works without --headless
+        Log.d(TAG, "Trying PTY direct exec...")
+        val envArray = finalEnvVars.map { "${it.key}=${it.value}" }.toTypedArray()
+        val ptyPid = NativeExec.nativeExecPty(
+            binaryPath,
+            args.toTypedArray(),
+            envArray,
+            cacheDir.absolutePath
+        )
+
+        if (ptyPid > 0) {
+            Log.d(TAG, "PTY direct exec succeeded: pid=$ptyPid")
+            nativeProcesses[taskId] = ptyPid
+
+            // Poll stdout from PTY master
+            Thread {
+                try {
+                    while (NativeExec.nativeIsAlive(ptyPid)) {
+                        val stdout = NativeExec.nativeReadStdout(ptyPid)
+                        if (stdout.isNotEmpty()) {
+                            for (line in stdout.lines().filter { it.isNotEmpty() }) {
+                                handler.post {
+                                    try { channel?.invokeMethod("onStdout", mapOf("taskId" to taskId, "line" to line)) }
+                                    catch (_: Exception) {}
+                                }
+                            }
+                        }
+                        Thread.sleep(50)
+                    }
+                    val remaining = NativeExec.nativeReadStdout(ptyPid)
+                    if (remaining.isNotEmpty()) {
+                        for (line in remaining.lines().filter { it.isNotEmpty() }) {
+                            handler.post {
+                                try { channel?.invokeMethod("onStdout", mapOf("taskId" to taskId, "line" to line)) }
+                                catch (_: Exception) {}
+                            }
+                        }
+                    }
+                } catch (e: Exception) { Log.e(TAG, "PTY stdout error", e) }
+            }.start()
+
+            // Poll stderr
+            Thread {
+                try {
+                    while (NativeExec.nativeIsAlive(ptyPid)) {
+                        val stderr = NativeExec.nativeReadStderr(ptyPid)
+                        if (stderr.isNotEmpty()) {
+                            for (line in stderr.lines().filter { it.isNotEmpty() }) {
+                                handler.post {
+                                    try { channel?.invokeMethod("onStderr", mapOf("taskId" to taskId, "line" to line)) }
+                                    catch (_: Exception) {}
+                                }
+                            }
+                        }
+                        Thread.sleep(50)
+                    }
+                    val remaining = NativeExec.nativeReadStderr(ptyPid)
+                    if (remaining.isNotEmpty()) {
+                        for (line in remaining.lines().filter { it.isNotEmpty() }) {
+                            handler.post {
+                                try { channel?.invokeMethod("onStderr", mapOf("taskId" to taskId, "line" to line)) }
+                                catch (_: Exception) {}
+                            }
+                        }
+                    }
+                } catch (e: Exception) { Log.e(TAG, "PTY stderr error", e) }
+            }.start()
+
+            // Wait for exit
+            Thread {
+                try {
+                    val exitCode = NativeExec.nativeWaitFor(ptyPid)
+                    nativeProcesses.remove(taskId)
+                    Log.d(TAG, "PTY process $taskId (pid=$ptyPid) exited: $exitCode")
+                    handler.post {
+                        try { channel?.invokeMethod("onExit", mapOf("taskId" to taskId, "exitCode" to exitCode)) }
+                        catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "PTY waitFor error", e)
+                    nativeProcesses.remove(taskId)
+                    handler.post {
+                        try { channel?.invokeMethod("onExit", mapOf("taskId" to taskId, "exitCode" to -1)) }
+                        catch (_: Exception) {}
+                    }
+                }
+            }.start()
+            return
+        }
+
+        Log.w(TAG, "PTY direct exec failed, trying memfd+PTY fallback...")
+
+        // Strategy 2: memfd_create + PTY (bypasses noexec on Android 10+)
+        val pid = NativeExec.nativeExecMemfd(
+            binaryPath,
+            args.toTypedArray(),
+            envArray,
+            cacheDir.absolutePath
+        )
+
+        if (pid <= 0) {
+            throw Exception("All execution strategies failed for $binaryPath. " +
+                "memfd_create returned pid=$pid. Binary must be bundled in APK as native lib.")
+        }
+
+        Log.d(TAG, "memfd execution succeeded: pid=$pid")
+        nativeProcesses[taskId] = pid
+
+        // Poll stdout from native pipes
+        Thread {
+            try {
+                while (NativeExec.nativeIsAlive(pid)) {
+                    val stdout = NativeExec.nativeReadStdout(pid)
+                    if (stdout.isNotEmpty()) {
+                        for (line in stdout.lines().filter { it.isNotEmpty() }) {
+                            handler.post {
+                                try { channel?.invokeMethod("onStdout", mapOf("taskId" to taskId, "line" to line)) }
+                                catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    Thread.sleep(50)
+                }
+                // Read any remaining data
+                val remaining = NativeExec.nativeReadStdout(pid)
+                if (remaining.isNotEmpty()) {
+                    for (line in remaining.lines().filter { it.isNotEmpty() }) {
+                        handler.post {
+                            try { channel?.invokeMethod("onStdout", mapOf("taskId" to taskId, "line" to line)) }
+                            catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) { Log.e(TAG, "native stdout error", e) }
+        }.start()
+
+        // Poll stderr from native pipes
+        Thread {
+            try {
+                while (NativeExec.nativeIsAlive(pid)) {
+                    val stderr = NativeExec.nativeReadStderr(pid)
+                    if (stderr.isNotEmpty()) {
+                        for (line in stderr.lines().filter { it.isNotEmpty() }) {
+                            handler.post {
+                                try { channel?.invokeMethod("onStderr", mapOf("taskId" to taskId, "line" to line)) }
+                                catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    Thread.sleep(50)
+                }
+                val remaining = NativeExec.nativeReadStderr(pid)
+                if (remaining.isNotEmpty()) {
+                    for (line in remaining.lines().filter { it.isNotEmpty() }) {
+                        handler.post {
+                            try { channel?.invokeMethod("onStderr", mapOf("taskId" to taskId, "line" to line)) }
+                            catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) { Log.e(TAG, "native stderr error", e) }
+        }.start()
+
+        // Wait for exit
+        Thread {
+            try {
+                val exitCode = NativeExec.nativeWaitFor(pid)
+                nativeProcesses.remove(taskId)
+                Log.d(TAG, "Native process $taskId (pid=$pid) exited: $exitCode")
+                handler.post {
+                    try { channel?.invokeMethod("onExit", mapOf("taskId" to taskId, "exitCode" to exitCode)) }
+                    catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "native waitFor error", e)
+                nativeProcesses.remove(taskId)
+                handler.post {
+                    try { channel?.invokeMethod("onExit", mapOf("taskId" to taskId, "exitCode" to -1)) }
+                    catch (_: Exception) {}
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * Try direct execution via ProcessBuilder.
+     * Returns Process if successful, null if blocked by noexec.
+     */
+    private fun tryDirectExec(
+        binaryPath: String,
+        args: List<String>,
+        envVars: Map<String, String>?
+    ): Process? {
+        try {
+            val cmd = mutableListOf(binaryPath)
+            cmd.addAll(args)
+            val builder = ProcessBuilder(cmd)
+            builder.redirectErrorStream(false)
+            builder.directory(cacheDir)
+            envVars?.let { builder.environment().putAll(it) }
+            val process = builder.start()
+            Thread.sleep(100)
+            if (process.isAlive) {
+                Log.d(TAG, "Direct execution succeeded")
+                return process
+            }
+            val exitCode = process.exitValue()
+            if (exitCode == 126 || exitCode == 127) {
+                Log.w(TAG, "Direct execution failed with exit code $exitCode (permission denied)")
+                return null
+            }
+            // Non-permission error — could be a normal quick exit
+            Log.d(TAG, "Direct execution exited quickly with code $exitCode")
+            return process
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct execution exception: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * Wire up stdout/stderr/exit monitoring for a Java Process object.
+     */
+    private fun streamProcessOutput(process: Process, taskId: String, handler: Handler, channel: MethodChannel?) {
         // stdout
         Thread {
             try {
@@ -203,111 +443,34 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    /**
-     * Try multiple strategies to execute the binary:
-     * 1. Direct execution (works for bundled .so in native lib dir)
-     * 2. Via linker64 (bypasses noexec for downloaded binaries on some devices)
-     * 3. Via sh -c (shell-based execution fallback)
-     */
-    private fun tryStartProcess(
-        binaryPath: String,
-        args: List<String>,
-        envVars: Map<String, String>?
-    ): Process? {
-        // Strategy 1: Direct execution
-        try {
-            val cmd = mutableListOf(binaryPath)
-            cmd.addAll(args)
-            val builder = ProcessBuilder(cmd)
-            builder.redirectErrorStream(false)
-            builder.directory(cacheDir)
-            envVars?.let { builder.environment().putAll(it) }
-            val process = builder.start()
-            // Quick check: if process is alive after a short delay, it started OK
-            Thread.sleep(100)
-            if (process.isAlive) {
-                Log.d(TAG, "Direct execution succeeded")
-                return process
-            }
-            // Process exited immediately — check if it was permission denied
-            val exitCode = process.exitValue()
-            if (exitCode == 126 || exitCode == 127) {
-                Log.w(TAG, "Direct execution failed with exit code $exitCode, trying fallbacks...")
-            } else {
-                // Non-permission error, return as-is (could be a normal quick exit)
-                Log.d(TAG, "Direct execution exited quickly with code $exitCode")
-                return process
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Direct execution exception: ${e.message}")
-        }
-
-        // Strategy 2: Via linker64 (arm64 only)
-        try {
-            val linker = if (File("/system/bin/linker64").exists()) "/system/bin/linker64"
-                        else if (File("/system/bin/linker").exists()) "/system/bin/linker"
-                        else null
-            if (linker != null) {
-                val cmd = mutableListOf(linker, binaryPath)
-                cmd.addAll(args)
-                val builder = ProcessBuilder(cmd)
-                builder.redirectErrorStream(false)
-                builder.directory(cacheDir)
-                envVars?.let { builder.environment().putAll(it) }
-                val process = builder.start()
-                Thread.sleep(100)
-                if (process.isAlive) {
-                    Log.d(TAG, "Linker execution succeeded")
-                    return process
-                }
-                val exitCode = process.exitValue()
-                Log.w(TAG, "Linker execution exited: $exitCode")
-                if (exitCode != 126 && exitCode != 127) return process
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Linker execution exception: ${e.message}")
-        }
-
-        // Strategy 3: Via sh -c (shell wrapper)
-        try {
-            val escapedArgs = args.joinToString(" ") { "'$it'" }
-            val shellCmd = "$binaryPath $escapedArgs"
-            val cmd = listOf("/system/bin/sh", "-c", shellCmd)
-            val builder = ProcessBuilder(cmd)
-            builder.redirectErrorStream(false)
-            builder.directory(cacheDir)
-            envVars?.let { builder.environment().putAll(it) }
-            val process = builder.start()
-            Thread.sleep(100)
-            if (process.isAlive) {
-                Log.d(TAG, "Shell execution succeeded")
-                return process
-            }
-            val exitCode = process.exitValue()
-            Log.w(TAG, "Shell execution exited: $exitCode")
-            if (exitCode != 126 && exitCode != 127) return process
-        } catch (e: Exception) {
-            Log.w(TAG, "Shell execution exception: ${e.message}")
-        }
-
-        Log.e(TAG, "All execution strategies failed for: $binaryPath")
-        return null
-    }
-
     private fun stopProcess(taskId: String) {
-        val process = processes[taskId] ?: return
-        Log.d(TAG, "Stopping: $taskId")
-        try {
-            process.destroy()
-            Thread {
-                try {
-                    Thread.sleep(3000)
-                    if (process.isAlive) process.destroyForcibly()
-                } catch (_: Exception) {}
+        // Stop Java Process
+        val process = processes[taskId]
+        if (process != null) {
+            Log.d(TAG, "Stopping Java process: $taskId")
+            try {
+                process.destroy()
+                Thread {
+                    try {
+                        Thread.sleep(3000)
+                        if (process.isAlive) process.destroyForcibly()
+                    } catch (_: Exception) {}
+                    processes.remove(taskId)
+                }.start()
+            } catch (_: Exception) {
                 processes.remove(taskId)
-            }.start()
-        } catch (_: Exception) {
-            processes.remove(taskId)
+            }
+            return
+        }
+
+        // Stop native memfd process
+        val pid = nativeProcesses[taskId]
+        if (pid != null) {
+            Log.d(TAG, "Stopping native process: $taskId (pid=$pid)")
+            try {
+                NativeExec.nativeKill(pid)
+            } catch (_: Exception) {}
+            nativeProcesses.remove(taskId)
         }
     }
 }
