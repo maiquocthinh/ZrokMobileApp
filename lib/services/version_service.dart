@@ -18,54 +18,66 @@ class VersionService {
 
   Future<List<ZrokVersion>> fetchRemoteVersions() async {
     try {
-      final response = await http.get(
-        Uri.parse(_apiUrl),
-        headers: {'Accept': 'application/vnd.github.v3+json'},
-      );
-      if (response.statusCode != 200) {
-        _log('GitHub API error: ${response.statusCode}');
-        return [];
-      }
-
-      final releases = jsonDecode(response.body) as List;
       final versions = <ZrokVersion>[];
+      var page = 1;
+      const perPage = 100;
 
-      for (final release in releases) {
-        // Tag format: zrok-vX.Y.Z → extract X.Y.Z
-        final tagName = (release['tag_name'] as String?) ?? '';
-        final versionMatch = RegExp(r'zrok-v(.+)').firstMatch(tagName);
-        final version = versionMatch?.group(1) ?? tagName.replaceFirst('v', '');
-        if (version.isEmpty) continue;
-
-        final assets = release['assets'] as List? ?? [];
-        String? downloadUrl;
-        String assetName = 'libzrok.so';
-        int size = 0;
-        for (final asset in assets) {
-          final name = (asset['name'] as String?) ?? '';
-          // New format: raw binary libzrok.so
-          if (name == 'libzrok.so') {
-            downloadUrl = asset['browser_download_url'] as String?;
-            size = asset['size'] as int? ?? 0;
-            assetName = name;
-            break;
-          }
-          // Fallback: old tar.gz format from upstream
-          if (name.contains('linux') && name.contains('arm64') && name.endsWith('.tar.gz')) {
-            downloadUrl = asset['browser_download_url'] as String?;
-            size = asset['size'] as int? ?? 0;
-            assetName = name;
-            break;
-          }
+      while (true) {
+        final response = await http.get(
+          Uri.parse('$_apiUrl?per_page=$perPage&page=$page'),
+          headers: {'Accept': 'application/vnd.github.v3+json'},
+        );
+        if (response.statusCode != 200) {
+          _log('GitHub API error: ${response.statusCode}');
+          break;
         }
 
-        versions.add(ZrokVersion(
-          version: version,
-          downloadUrl: downloadUrl ?? '',
-          assetName: assetName,
-          sizeBytes: size,
-          releaseDate: DateTime.tryParse(release['published_at'] as String? ?? ''),
-        ));
+        final releases = jsonDecode(response.body) as List;
+        if (releases.isEmpty) break;
+
+        for (final release in releases) {
+          // Tag format: zrok-vX.Y.Z → extract X.Y.Z
+          final tagName = (release['tag_name'] as String?) ?? '';
+          final versionMatch = RegExp(r'zrok-v(.+)').firstMatch(tagName);
+          final version = versionMatch?.group(1) ?? tagName.replaceFirst('v', '');
+          if (version.isEmpty) continue;
+
+          final assets = release['assets'] as List? ?? [];
+          String? downloadUrl;
+          String assetName = 'libzrok.so';
+          int size = 0;
+          for (final asset in assets) {
+            final name = (asset['name'] as String?) ?? '';
+            // New format: raw binary libzrok.so
+            if (name == 'libzrok.so') {
+              downloadUrl = asset['browser_download_url'] as String?;
+              size = asset['size'] as int? ?? 0;
+              assetName = name;
+              break;
+            }
+            // Fallback: old tar.gz format from upstream
+            if (name.contains('linux') && name.contains('arm64') && name.endsWith('.tar.gz')) {
+              downloadUrl = asset['browser_download_url'] as String?;
+              size = asset['size'] as int? ?? 0;
+              assetName = name;
+              break;
+            }
+          }
+
+          versions.add(ZrokVersion(
+            version: version,
+            downloadUrl: downloadUrl ?? '',
+            assetName: assetName,
+            sizeBytes: size,
+            releaseDate: DateTime.tryParse(release['published_at'] as String? ?? ''),
+          ));
+        }
+
+        // If fewer than perPage results, we've reached the last page
+        if (releases.length < perPage) break;
+        page++;
+        // Safety: max 10 pages
+        if (page > 10) break;
       }
 
       _log('Fetched ${versions.length} versions');

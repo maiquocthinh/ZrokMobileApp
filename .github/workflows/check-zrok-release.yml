@@ -26,7 +26,7 @@ jobs:
               "https://api.github.com/repos/openziti/zrok/releases?per_page=100&page=$PAGE")
 
             # Break if empty
-            COUNT=$(echo "$RESPONSE" | jq 'length')
+            COUNT=$(echo "$RESPONSE" | jq 'if type == "array" then length else 0 end')
             if [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
               break
             fi
@@ -41,7 +41,7 @@ jobs:
           done
 
           # Write to file for next step
-          echo "$VERSIONS" | tr ' ' '\n' | sort -V | grep -v '^$' > /tmp/upstream_versions.txt
+          echo "$VERSIONS" | tr ' ' '\n' | sort -V | grep -v '^$' > /tmp/upstream_versions.txt || true
           echo "Found $(wc -l < /tmp/upstream_versions.txt) upstream stable releases"
           cat /tmp/upstream_versions.txt
 
@@ -57,7 +57,7 @@ jobs:
               -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100&page=$PAGE")
 
-            COUNT=$(echo "$RESPONSE" | jq 'length')
+            COUNT=$(echo "$RESPONSE" | jq 'if type == "array" then length else 0 end')
             if [ "$COUNT" = "0" ] || [ "$COUNT" = "null" ]; then
               break
             fi
@@ -69,7 +69,7 @@ jobs:
             if [ "$PAGE" -gt 10 ]; then break; fi
           done
 
-          echo "$EXISTING" | tr ' ' '\n' | sort | grep -v '^$' > /tmp/existing_tags.txt
+          echo "$EXISTING" | tr ' ' '\n' | sort | grep -v '^$' > /tmp/existing_tags.txt || true
           echo "Found $(wc -l < /tmp/existing_tags.txt) existing releases"
           cat /tmp/existing_tags.txt
 
