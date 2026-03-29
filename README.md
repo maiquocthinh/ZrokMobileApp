@@ -1,112 +1,50 @@
-<<<<<<< HEAD
-# myapp
+# Zrok Mobile App
 
-A new Flutter project.
+Ứng dụng Flutter để quản lý và chạy lệnh zrok trên mobile.
 
-## Getting Started
+## Kiến trúc mới
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-=======
-# Zrok Mobile — Pure Go Android App
-
-A personal Android app to run [zrok](https://zrok.io) tunneling commands. Built entirely in Go with [Fyne UI](https://fyne.io) — no Kotlin, no Android Studio needed.
-
-## Features
-
-- **Dashboard** — Command input with quick-action chips, env selector, live task cards with share URL copy
-- **Task Logs** — Streaming log viewer with auto-scroll and copy-all
-- **History** — Auto-saved command history with search, date grouping, re-run
-- **Quick Actions** — Save commands as 1-tap templates with custom names
-- **Environments** — Multi-environment management (enable/disable/delete, token masking)
-- **Settings** — Notification toggle, auto-reconnect toggle
-
-## Project Structure
+Project đã được refactor theo cấu trúc `feature-first` + `core/app`:
 
 ```
-ZrokApp/
-├── main.go                         # Entry point
-├── internal/
-│   ├── core/
-│   │   ├── manager.go              # Central state manager (envs, tasks, history, settings)
-│   │   ├── cmdparser.go            # Command parser (share/access/reserve/release/status/overview)
-│   │   ├── cmdparser_test.go       # 13 unit tests
-│   │   ├── executor.go             # Task executor (SDK stubs, 6 handlers)
-│   │   ├── history.go              # History CRUD + JSON persistence
-│   │   ├── quickaction.go          # Quick actions CRUD + JSON persistence
-│   │   └── settings.go             # App settings + persistence
-│   └── ui/
-│       ├── app.go                  # Tab navigation (4 tabs)
-│       ├── theme.go                # Dark theme (Material Design 3 inspired)
-│       ├── dashboard.go            # Dashboard screen
-│       ├── logs.go                 # Log viewer window
-│       ├── history.go              # History screen
-│       ├── quickactions.go         # Quick actions screen
-│       └── environments.go         # Environments + settings screen
-├── docs/                           # Documentation
-│   ├── architecture.md             # Architecture overview
-│   ├── design.md                   # Design philosophy
-│   ├── wireframes.md               # ASCII wireframes
-│   ├── roadmap.md                  # Implementation roadmap
-│   ├── BUILD_ANDROID.md            # Android build guide
-│   └── features/                   # Feature specs (F01–F08)
-└── .github/workflows/
-    └── build-android.yml           # CI: auto-build APK via GitHub Actions
+lib/
+├── main.dart
+└── src/
+    ├── app/
+    │   ├── di/                   # Dependency wiring (AppScope)
+    │   ├── navigation/           # GoRouter + shell scaffold
+    │   ├── state/                # AppController (state orchestration)
+    │   └── view/                 # Root app widget
+    ├── core/
+    │   ├── infrastructure/       # Platform/storage adapters
+    │   ├── theme/                # App theme
+    │   ├── utils/                # Shared utilities
+    │   └── widgets/              # Reusable widgets
+    └── features/
+        ├── environments/
+        ├── history/
+        ├── quick_actions/
+        ├── settings/
+        ├── tasks/
+        └── versions/
 ```
 
-## Build & Run
+Mỗi feature tách rõ:
+- `domain/entities`
+- `domain/repositories` (interface)
+- `data/*_repository_impl.dart` (implementation)
+- `presentation/screens`
 
-### Desktop (for testing)
+## Chạy project
+
 ```bash
-go run .
+flutter pub get
+flutter analyze
+flutter test
+flutter run
 ```
 
-### Android APK (via GitHub Actions)
-Push to `main` → GitHub Actions auto-builds APK → download from Artifacts tab.
+## Trạng thái
 
-See [docs/BUILD_ANDROID.md](docs/BUILD_ANDROID.md) for local build setup.
-
-### Tests
-```bash
-go test ./internal/core/... -v       # 13 unit tests
-go test ./internal/core/... -race    # Race detector
-go build ./...                       # Full compile check
-```
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| UI | [Fyne v2.4](https://fyne.io) — cross-platform Go UI toolkit |
-| Language | Go 1.21+ |
-| Concurrency | goroutines + sync.RWMutex + sync.Once |
-| Persistence | JSON files (envs, history, quick actions, settings) |
-| CI/CD | GitHub Actions (auto APK build) |
-| Future | zrok SDK integration (stubs ready in `executor.go`) |
-
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Dashboard | ✅ Done |
-| Task Logs | ✅ Done |
-| History | ✅ Done |
-| Quick Actions | ✅ Done |
-| Environments | ✅ Done |
-| Command Parser | ✅ Done (13 tests) |
-| Settings | ✅ Done |
-| zrok SDK integration | ⏳ Stubbed |
-| Android APK | ⏳ CI ready |
-
-## License
-
-Personal project.
->>>>>>> 88fca2593262c978e446599e0921dbd4c392375c
+- `flutter analyze`: no issues
+- `flutter test`: pass
